@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,12 +14,10 @@ package scala.tools.nsc.interpreter.shell
 
 import java.io.{Closeable, OutputStream, PrintWriter, Reader}
 import java.util.Arrays.asList
-
 import javax.script._
-
 import scala.beans.BeanProperty
 import scala.jdk.CollectionConverters._
-import scala.reflect.internal.util.Position
+import scala.reflect.internal.util.{CodeAction, Position}
 import scala.tools.nsc.Settings
 import scala.tools.nsc.interpreter.Results.Incomplete
 import scala.tools.nsc.interpreter.{ImportContextPreamble, ScriptedInterpreter, ScriptedRepl}
@@ -71,7 +69,7 @@ class Scripted(@BeanProperty val factory: ScriptEngineFactory, settings: Setting
   def dynamicContext_=(ctx: ScriptContext): Unit = intp.call("set", ctx)
 
   def dynamicContext: ScriptContext = intp.call("value") match {
-    case Right(ctx: ScriptContext) => ctx
+    case Right(scriptctx: ScriptContext) => scriptctx
     case Left(e) => throw e
     case Right(other) => throw new ScriptException(s"Unexpected value for context: $other")
   }
@@ -317,7 +315,7 @@ private class SaveFirstErrorReporter(settings: Settings, out: PrintWriter) exten
   private var _firstError: Option[(Position, String)] = None
   def firstError = _firstError
 
-  override def doReport(pos: Position, msg: String, severity: Severity): Unit =
+  override def doReport(pos: Position, msg: String, severity: Severity, actions: List[CodeAction]): Unit =
     if (severity == ERROR && _firstError.isEmpty) _firstError = Some((pos, msg))
 
   override def reset() = { super.reset(); _firstError = None }

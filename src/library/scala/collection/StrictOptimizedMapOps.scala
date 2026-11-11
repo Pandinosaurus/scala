@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -38,7 +38,11 @@ trait StrictOptimizedMapOps[K, +V, +CC[_, _] <: IterableOps[_, AnyConstr, _], +C
 
   @deprecated("Use ++ with an explicit collection argument instead of + with varargs", "2.13.0")
   override def + [V1 >: V](elem1: (K, V1), elem2: (K, V1), elems: (K, V1)*): CC[K, V1] = {
-    val m = ((this + elem1).asInstanceOf[Map[K, V]] + elem2).asInstanceOf[CC[K, V1]]
-    if(elems.isEmpty) m else m.concat(elems).asInstanceOf[CC[K, V1]]
+    val b = mapFactory.newBuilder[K, V1]
+    b ++= this
+    b += elem1
+    b += elem2
+    if (elems.nonEmpty) b ++= elems
+    b.result()
   }
 }

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -70,7 +70,7 @@ import scala.tools.nsc.Reporting.WarningCategory
  *  like from the point of view of one of its subclasses.
  */
 trait Checkable {
-  self: Analyzer =>
+  self: AbstractAnalyzer =>
 
   import global._
   import definitions._
@@ -139,12 +139,14 @@ trait Checkable {
 
   private class CheckabilityChecker(val X: Type, val P: Type, isRecheck: Boolean = false) {
     import Checkability._
+    /** Whether the result may change once the classes compiled in this run are complete, see `isKnown`. */
+    var deferred = false
     import erasure.GenericArray
     def Xsym = X.typeSymbol
     def Psym = P.typeSymbol
     def PErased =
       P match {
-        case GenericArray(n, core) => existentialAbstraction(core.typeSymbol :: Nil, P)
+        case GenericArray(_, core) => existentialAbstraction(core.typeSymbol :: Nil, P)
         case _                     => existentialAbstraction(Psym.typeParams, Psym.tpe_*)
       }
     def XR = if (Xsym == AnyClass) PErased else propagateKnownTypes(X, Psym)
@@ -223,7 +225,7 @@ trait Checkable {
      *  additional conditions holds:
      *   - either A or B is effectively final
      *   - neither A nor B is a trait (i.e. both are actual classes, not eligible for mixin)
-     *   - both A and B are sealed/final, and every possible pairing of their children is irreconcilable
+     *   - either A or B is sealed/final, and every possible pairing of their children (or themselves) is irreconcilable
      *
      *  The last two conditions of the last possibility (that the symbols are not of
      *  classes being compiled in the current run) are because this currently runs too early,
@@ -240,21 +242,25 @@ trait Checkable {
         && !sym2.isSubClass(sym1)
       )
       // Are all children of these symbols pairwise irreconcilable?
+      // A child that is being compiled may not be complete yet, so the check is postponed.
       def allChildrenAreIrreconcilable(sym1: Symbol, sym2: Symbol) = {
-        val sc1 = sym1.sealedChildren
-        val sc2 = sym2.sealedChildren
-        sc1.forall(c1 => sc2.forall(c2 => areIrreconcilableAsParents(c1, c2)))
+        val sc1 = if (isSealedOrFinal(sym1)) sym1.sealedChildren else Set(sym1)
+        val sc2 = if (isSealedOrFinal(sym2)) sym2.sealedChildren else Set(sym2)
+        sc1.forall(c1 => isKnown(c1) && sc2.forall(c2 => isKnown(c2) && areIrreconcilableAsParents(c1, c2)))
       }
       areUnrelatedClasses(sym1, sym2) && (
          isEffectivelyFinal(sym1) // initialization important
       || isEffectivelyFinal(sym2)
       || !sym1.isTrait && !sym2.isTrait
-      || isSealedOrFinal(sym1) && isSealedOrFinal(sym2) && allChildrenAreIrreconcilable(sym1, sym2) && (isRecheck || !currentRun.compiles(sym1) && !currentRun.compiles(sym2))
+      || (isSealedOrFinal(sym1) || isSealedOrFinal(sym2)) && isKnown(sym1) && isKnown(sym2) && allChildrenAreIrreconcilable(sym1, sym2)
       )
     }
     private def isSealedOrFinal(sym: Symbol) = sym.isSealed || sym.isFinal
+    private def isKnown(sym: Symbol) = isRecheck || !currentRun.compiles(sym) || { deferred = true; false }
     // initialization important
-    private def isEffectivelyFinal(sym: Symbol): Boolean = sym.initialize.isEffectivelyFinalOrNotOverridden
+    // a local class without children is final, but its children are only known once they are completed
+    private def isEffectivelyFinal(sym: Symbol): Boolean = sym.initialize.isEffectivelyFinalOrNotOverridden &&
+      (sym.isFinal || sym.isModuleOrModuleClass || !sym.originalOwner.isTerm || isKnown(sym))
 
     def isNeverSubClass(sym1: Symbol, sym2: Symbol) = areIrreconcilableAsParents(sym1, sym2)
 
@@ -276,7 +282,7 @@ trait Checkable {
     }
     // Important to dealias at any entry point (this is the only one at this writing but cf isNeverSubClass.)
     def isNeverSubType(tp1: Type, tp2: Type): Boolean = /*logResult(s"isNeverSubType($tp1, $tp2)")*/((tp1.dealias, tp2.dealias) match {
-      case (TypeRef(_, sym1, args1), TypeRef(_, sym2, args2)) =>
+      case (TypeRef(_, sym1, _), TypeRef(_, sym2, args2)) =>
         isNeverSubClass(sym1, sym2) || {
           (sym1 isSubClass sym2) && {
             val tp1seen = tp1 baseType sym2
@@ -312,11 +318,24 @@ trait Checkable {
       if (P0.typeSymbol == SingletonClass)
         context.warning(tree.pos, s"fruitless type test: every non-null value will be a Singleton dynamically", WarningCategory.Other)
       else {
+        def deepDealias(tp: Type): Type =
+          tp.dealiasWiden match {
+            case TypeRef(pre, ArrayClass, args) => TypeRef(pre, ArrayClass, args.map(deepDealias))
+            case tp => tp
+          }
         // singleton types not considered here, dealias the pattern
-        val P = P0.dealiasWiden
+        val P = deepDealias(P0)
         val X = X0.widen
 
-        def PString = if (P eq P0) P.toString else s"$P (the underlying of $P0)"
+        def PString = {
+          val pstr = P.toString
+          if (P eq P0) pstr
+          else {
+            val ostr = P0.toString
+            if (pstr == ostr) pstr
+            else s"$pstr (the underlying of $ostr)"
+          }
+        }
 
         P match {
           // Prohibit top-level type tests for these, but they are ok nested (e.g. case Foldable[Nothing] => ... )
@@ -331,48 +350,44 @@ trait Checkable {
           case RefinedType(parents, _) =>
             parents.foreach(checkCheckable(tree, _, X, inPattern, canRemedy))
           case _ =>
+            def warning(checker: CheckabilityChecker): Option[(String, WarningCategory)] =
+              if (checker.neverMatches) {
+                val addendum = if (checker.neverSubClass) "" else " (but still might match its erasure)"
+                Some((s"fruitless type test: a value of type $X cannot also be a $PString$addendum", WarningCategory.Other))
+              }
+              else if (checker.isUncheckable) {
+                def uncheckableMessage = checker.uncheckableType match {
+                  case NoType                                   => "something"
+                  case tp @ RefinedType(_, _)                   => "refinement " + tp
+                  case TypeRef(_, sym, _) if sym.isAbstractType => "abstract type " + sym.name
+                  case tp                                       => "non-variable type argument " + tp
+                }
+                val msg = {
+                  val where = if (inPattern) "pattern " else ""
+                  if (checker.uncheckableCard == 2)
+                    s"the type test for $where$PString cannot be checked at runtime because it has type parameters eliminated by erasure"
+                  else {
+                    val thing =
+                      if (checker.uncheckableType =:= P) s"abstract type $where$PString"
+                      else s"$uncheckableMessage in type $where$PString"
+                    s"$thing is unchecked since it is eliminated by erasure"
+                  }
+                }
+                Some((msg, WarningCategory.Unchecked))
+              }
+              else None
+
             val checker = new CheckabilityChecker(X, P)
             if (checker.result == RuntimeCheckable)
               log(checker.summaryString)
-
-            def neverMatchesWarning(result: CheckabilityChecker) = {
-              val addendum = if (result.neverSubClass) "" else " (but still might match its erasure)"
-              context.warning(tree.pos, s"fruitless type test: a value of type $X cannot also be a $PString$addendum", WarningCategory.Other)
+            if (checker.deferred) {
+              debuglog(s"deferred checkCheckable($X, $P)")
+              // Checked in refchecks, where only the trees of committed typing attempts remain.
+              val recheck = () => warning(new CheckabilityChecker(X, P, isRecheck = true))
+              val earlier = tree.attachments.get[CheckableRecheckAttachment].map(_.rechecks).getOrElse(Nil)
+              tree.updateAttachment(CheckableRecheckAttachment(earlier :+ recheck))
             }
-            if (checker.neverMatches)
-              neverMatchesWarning(checker)
-            else if (checker.isUncheckable) {
-              def uncheckableMessage = checker.uncheckableType match {
-                case NoType                                   => "something"
-                case tp @ RefinedType(_, _)                   => "refinement " + tp
-                case TypeRef(_, sym, _) if sym.isAbstractType => "abstract type " + sym.name
-                case tp                                       => "non-variable type argument " + tp
-              }
-              val msg = {
-                val where = if (inPattern) "pattern " else ""
-                if (checker.uncheckableCard == 2)
-                  s"the type test for $where$PString cannot be checked at runtime because it has type parameters eliminated by erasure"
-                else {
-                  val thing =
-                    if (checker.uncheckableType =:= P) s"abstract type $where$PString"
-                    else s"$uncheckableMessage in type $where$PString"
-                  s"$thing is unchecked since it is eliminated by erasure"
-                }
-              }
-              context.warning(tree.pos, msg, WarningCategory.Unchecked)
-            }
-            else if (checker.result == RuntimeCheckable) {
-              // register deferred checking for sealed types in current run
-              def recheckFruitless(): Unit = {
-                val rechecker = new CheckabilityChecker(X, P, isRecheck = true)
-                if (rechecker.neverMatches) neverMatchesWarning(rechecker)
-              }
-              def isSealedOrFinal(sym: Symbol) = sym.isSealed || sym.isFinal
-              val Xsym = X.typeSymbol
-              val Psym = P.typeSymbol
-              if (isSealedOrFinal(Xsym) && isSealedOrFinal(Psym) && (currentRun.compiles(Xsym) || currentRun.compiles(Psym)))
-                context.unit.toCheck += (() => recheckFruitless())
-            }
+            else for ((msg, category) <- warning(checker)) context.warning(tree.pos, msg, category)
         }
       }
     }

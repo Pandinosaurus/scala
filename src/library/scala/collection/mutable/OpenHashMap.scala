@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,8 +13,8 @@
 package scala.collection
 package mutable
 
+import java.lang.Integer.numberOfLeadingZeros
 import java.util.ConcurrentModificationException
-
 import scala.collection.generic.DefaultSerializable
 
 /**
@@ -41,6 +41,8 @@ object OpenHashMap extends MapFactory[OpenHashMap] {
   final private class OpenEntry[Key, Value](var key: Key,
                                             var hash: Int,
                                             var value: Option[Value])
+
+  private[mutable] def nextPositivePowerOfTwo(target: Int): Int = 1 << -numberOfLeadingZeros(target - 1)
 }
 
 /** A mutable hash map based on an open addressing method. The precise scheme is
@@ -75,7 +77,7 @@ class OpenHashMap[Key, Value](initialSize : Int)
 
   override def mapFactory: MapFactory[OpenHashMap] = OpenHashMap
 
-  private[this] val actualInitialSize = HashTable.nextPositivePowerOfTwo(initialSize)
+  private[this] val actualInitialSize = OpenHashMap.nextPositivePowerOfTwo(initialSize)
 
   private[this] var mask = actualInitialSize - 1
 
@@ -118,7 +120,7 @@ class OpenHashMap[Key, Value](initialSize : Int)
     deleted = 0
   }
 
-  /** Return the index of the first slot in the hash table (in probe order)
+  /** Returns the index of the first slot in the hash table (in probe order)
     * that is, in order of preference, either occupied by the given key, deleted, or empty.
     *
     * @param hash hash value for `key`
@@ -220,7 +222,7 @@ class OpenHashMap[Key, Value](initialSize : Int)
   }
 
   /** An iterator over the elements of this map. Use of this iterator follows
-    *  the same contract for concurrent modification as the foreach method.
+    *  the same contract for concurrent modification as the `foreach` method.
     *
     *  @return   the iterator
     */

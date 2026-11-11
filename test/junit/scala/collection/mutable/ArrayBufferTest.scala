@@ -1,26 +1,24 @@
 package scala.collection.mutable
 
-import org.junit.Test
 import org.junit.Assert.{assertEquals, assertTrue}
+import org.junit.Test
 
 import java.lang.reflect.InvocationTargetException
 import scala.annotation.nowarn
+import scala.runtime.PStatics.VM_MaxArraySize
 import scala.tools.testkit.AssertUtil.{assertSameElements, assertThrows, fail}
 import scala.tools.testkit.ReflectUtil.{getMethodAccessible, _}
+import scala.util.chaining._
 
 class ArrayBufferTest {
 
   /* Test for scala/bug#9043 */
   @Test
-  def testInsertAll(): Unit = {
-    val traver = ArrayBuffer(2, 4, 5, 7)
+  def testInsertAll: Unit = {
+    def traver = ArrayBuffer(2, 4, 5, 7)
     val testSeq = List(1, 3, 6, 9)
 
-    def insertAt(x: Int) = {
-      val clone = traver.clone()
-      clone.insertAll(x, testSeq)
-      clone
-    }
+    def insertAt(x: Int) = traver.tap(_.insertAll(x, testSeq))
 
     // Just insert some at position 0
     assertEquals(ArrayBuffer(1, 3, 6, 9, 2, 4, 5, 7), insertAt(0))
@@ -34,6 +32,9 @@ class ArrayBufferTest {
     // Overflow is caught
     assertThrows[IndexOutOfBoundsException] { insertAt(-1) }
     assertThrows[IndexOutOfBoundsException] { insertAt(traver.size + 10) }
+
+    val xs = new Iterable[Int] { def iterator = Iterator(42); override def knownSize = 10 }
+    assertThrows[IllegalStateException] { traver.tap(_.insertAll(0, xs)) }
   }
 
   @Test
@@ -387,28 +388,35 @@ class ArrayBufferTest {
   // scala/bug#7880 and scala/bug#12464
   @Test def `ensureSize must terminate and have limits`(): Unit = {
     val sut = getMethodAccessible[ArrayBuffer.type]("resizeUp")
-    def resizeUp(arrayLen: Long, targetLen: Long): Int = sut.invoke(ArrayBuffer, arrayLen, targetLen).asInstanceOf[Int]
+    def resizeUp(arrayLen: Int, targetLen: Int): Int = sut.invoke(ArrayBuffer, arrayLen, targetLen).asInstanceOf[Int]
 
     // check termination and correctness
-    assertTrue(7 < ArrayBuffer.DefaultInitialSize)  // condition of test
+    assertTrue(7 < ArrayBuffer.DefaultInitialSize) // condition of test
+    assertEquals(-1, resizeUp(7, 0))
+    assertEquals(-1, resizeUp(Int.MaxValue, 0))
+    assertEquals(ArrayBuffer.DefaultInitialSize, resizeUp(-1, 0)) // no check of arrayLen
     assertEquals(ArrayBuffer.DefaultInitialSize, resizeUp(7, 10))
-    assertEquals(Int.MaxValue - 2, resizeUp(Int.MaxValue / 2, Int.MaxValue / 2 + 1))  // was: ok
-    assertEquals(Int.MaxValue - 2, resizeUp(Int.MaxValue / 2, Int.MaxValue / 2 + 2))  // was: ok
-    assertEquals(-1, resizeUp(Int.MaxValue / 2 + 1, Int.MaxValue / 2 + 1))  // was: wrong
-    assertEquals(Int.MaxValue - 2, resizeUp(Int.MaxValue / 2 + 1, Int.MaxValue / 2 + 2))  // was: hang
-    assertEquals(Int.MaxValue - 2, resizeUp(Int.MaxValue / 2, Int.MaxValue - 2))
+    assertEquals(VM_MaxArraySize, resizeUp(Int.MaxValue / 2, Int.MaxValue / 2 + 1)) // `MaxValue / 2` cannot be doubled
+    assertEquals(VM_MaxArraySize / 2 * 2, resizeUp(VM_MaxArraySize / 2, VM_MaxArraySize / 2 + 1)) // `VM_MaxArraySize / 2` can be doubled
+    assertEquals(VM_MaxArraySize, resizeUp(Int.MaxValue / 2, Int.MaxValue / 2 + 2))
+    assertEquals(-1, resizeUp(Int.MaxValue / 2 + 1, Int.MaxValue / 2 + 1)) // no resize needed
+    assertEquals(VM_MaxArraySize, resizeUp(Int.MaxValue / 2 + 1, Int.MaxValue / 2 + 2))
+    assertEquals(VM_MaxArraySize, resizeUp(Int.MaxValue / 2, VM_MaxArraySize))
+    assertEquals(123456*2+33, resizeUp(123456, 123456*2+33)) // use targetLen if it's larger than double the current
 
     // check limits
     def rethrow(op: => Any): Unit =
       try op catch { case e: InvocationTargetException => throw e.getCause }
-    def checkExceedsMaxInt(targetLen: Long): Unit =
+    def checkExceedsMaxInt(targetLen: Int): Unit = {
       assertThrows[Exception](rethrow(resizeUp(0, targetLen)),
-                              _ == "Collections cannot have more than 2147483647 elements")
-    def checkExceedsVMArrayLimit(targetLen: Long): Unit =
+        _ == s"Overflow while resizing array of array-backed collection. Requested length: $targetLen; current length: 0; increase: $targetLen")
+    }
+    def checkExceedsVMArrayLimit(targetLen: Int): Unit =
       assertThrows[Exception](rethrow(resizeUp(0, targetLen)),
-                              _ == "Size of array-backed collection exceeds VM array size limit of 2147483645")
+        _ == s"Array of array-backed collection exceeds VM length limit of $VM_MaxArraySize. Requested length: $targetLen; current length: 0")
 
-    checkExceedsMaxInt(Int.MaxValue + 1L)
+    checkExceedsMaxInt(-1)
+    checkExceedsMaxInt(Int.MaxValue + 1: @nowarn)
     checkExceedsVMArrayLimit(Int.MaxValue)
     checkExceedsVMArrayLimit(Int.MaxValue - 1)
   }
@@ -503,5 +511,25 @@ class ArrayBufferTest {
     check(_.dropInPlace(30))
     check(_ ++= (1 to 100))
     check(_.insertAll(1, 1 to 100))
+  }
+
+  @Test def `drop right when empty is empty`: Unit = {
+    assertTrue(ArrayBuffer().dropRight(1).isEmpty)
+  }
+
+  @Test def `refuse to build from an overly huge thing`: Unit = {
+    val bld = ArrayBuffer.newBuilder[String]
+    assertThrows[Exception](bld.sizeHint(Int.MaxValue), _.contains("exceeds VM length limit"))
+    bld.addOne("hello, world")
+    assertTrue(bld.result().contains("hello, world"))
+  }
+
+  @Test def `sliding throws on mutation`: Unit = {
+    val b = ArrayBuffer.from(1 to 10)
+    val it = b.sliding(size = 2, step = 1)
+    assertTrue(it.hasNext)
+    assertEquals(2, it.next().size)
+    b(2) = 42
+    assertThrows[java.util.ConcurrentModificationException](it.hasNext)
   }
 }

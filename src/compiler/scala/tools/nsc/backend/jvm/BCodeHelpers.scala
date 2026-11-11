@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -15,19 +15,21 @@ package tools.nsc
 package backend.jvm
 
 import scala.PartialFunction.cond
-import scala.annotation.tailrec
-import scala.tools.asm
-import scala.tools.asm.{ClassWriter, Label}
+import scala.annotation.{tailrec, unused}
+import scala.tools.asm, asm.{ClassWriter, Label}
 import scala.tools.nsc.Reporting.WarningCategory
 import scala.tools.nsc.backend.jvm.BCodeHelpers.ScalaSigBytes
 import scala.tools.nsc.backend.jvm.BackendReporting._
 import scala.tools.nsc.reporters.NoReporter
-import scala.util.chaining.scalaUtilChainingOps
+import scala.util.chaining._
 
 /*
  *  Traits encapsulating functionality to convert Scala AST Trees into ASM ClassNodes.
  *
- *  @author  Miguel Garcia, https://lampwww.epfl.ch/~magarcia/ScalaCompilerCornerReloaded/
+ *  @author  Miguel Garcia
+ *
+ *  For compiler archaeologists: Miguel's notes from 2010-2014, long out of date,
+ *  https://chara.epfl.ch/~magarcia/ScalaCompilerCornerReloaded/
  *
  */
 abstract class BCodeHelpers extends BCodeIdiomatic {
@@ -203,8 +205,8 @@ abstract class BCodeHelpers extends BCodeIdiomatic {
    * an anonymous or local class). See doc in BTypes.
    *
    * The class is parameterized by two functions to obtain a bytecode class descriptor for a class
-   * symbol, and to obtain a method signature descriptor fro a method symbol. These function depend
-   * on the implementation of GenASM / GenBCode, so they need to be passed in.
+   * symbol, and to obtain a method signature descriptor fro a method symbol. These functions are
+   * passed in because this code was once shared by the GenASM and GenBCode backends.
    */
   def enclosingMethodAttribute(classSym: Symbol, classDesc: Symbol => String, methodDesc: Symbol => String): Option[EnclosingMethodEntry] = {
     // specialized classes are always top-level, see comment in BTypes
@@ -266,7 +268,7 @@ abstract class BCodeHelpers extends BCodeIdiomatic {
     /*
      * must-single-thread
      */
-    def apply(sym: Symbol, csymCompUnit: CompilationUnit, mainClass: Option[String]): Boolean = sym.hasModuleFlag && {
+    def apply(sym: Symbol, @unused csymCompUnit: CompilationUnit, mainClass: Option[String]): Boolean = sym.hasModuleFlag && {
       val warn = mainClass.fold(true)(_ == sym.fullNameString)
       def warnBadMain(msg: String, pos: Position): Unit = if (warn) runReporting.warning(pos,
         s"""|not a valid main method for ${sym.fullName('.')},
@@ -429,7 +431,7 @@ abstract class BCodeHelpers extends BCodeIdiomatic {
      *
      *  must-single-thread
      */
-    def getAnnotPickle(jclassName: String, sym: Symbol): Option[AnnotationInfo] = {
+    def getAnnotPickle(@unused jclassName: String, sym: Symbol): Option[AnnotationInfo] = {
       currentRun.symData get sym match {
         case Some(pickle) if !sym.isModuleClass => // pickles for module classes are in the companion / mirror class
           val scalaAnnot = {
@@ -651,7 +653,7 @@ abstract class BCodeHelpers extends BCodeIdiomatic {
       // without it.  This is particularly bad because the availability of
       // generic information could disappear as a consequence of a seemingly
       // unrelated change.
-         settings.Ynogenericsig
+         settings.Ynogenericsig.value
       || sym.isArtifact
       || sym.isLiftedMethod
       || sym.isBridge
@@ -692,7 +694,7 @@ abstract class BCodeHelpers extends BCodeIdiomatic {
             catch { case _: Throwable => false }
           }
 
-      if (settings.Xverify) {
+      if (settings.Xverify.value) {
         // Run the signature parser to catch bogus signatures.
         val isValidSignature = wrap {
           // Alternative: scala.tools.reflect.SigParser (frontend to sun.reflect.generics.parser.SignatureParser)
@@ -830,7 +832,7 @@ abstract class BCodeHelpers extends BCodeIdiomatic {
      *
      * must-single-thread
      */
-    def addForwarders(jclass: asm.ClassVisitor, jclassName: String, moduleClass: Symbol): Unit = {
+    def addForwarders(jclass: asm.ClassVisitor, @unused jclassName: String, moduleClass: Symbol): Unit = {
       assert(moduleClass.isModuleClass, moduleClass)
 
       val linkedClass = moduleClass.companionClass

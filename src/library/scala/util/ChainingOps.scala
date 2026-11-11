@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -16,7 +16,7 @@ package util
 import scala.language.implicitConversions
 
 trait ChainingSyntax {
-  @`inline` implicit final def scalaUtilChainingOps[A](a: A): ChainingOps[A] = new ChainingOps(a)
+  @inline implicit final def scalaUtilChainingOps[A](a: A): ChainingOps[A] = new ChainingOps(a)
 }
 
 /** Adds chaining methods `tap` and `pipe` to every type.

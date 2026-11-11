@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -42,7 +42,7 @@ import Mode._
  * }}}
  */
 trait PatternTypers {
-  self: Analyzer =>
+  self: AbstractAnalyzer =>
 
   import global._
   import definitions._
@@ -163,17 +163,20 @@ trait PatternTypers {
       val baseClass = exprTyped.tpe.typeSymbol match {
         case ArrayClass   => ArrayClass
         case NothingClass => NothingClass
+        case NullClass    => NullClass
         case _            => SeqClass
       }
       val starType = baseClass match {
         case ArrayClass if isPrimitiveValueType(pt) || !isFullyDefined(pt) => arrayType(pt)
         case ArrayClass                                                    => boundedArrayType(pt)
+        case NullClass                                                     => seqType(NothingTpe)
         case _                                                             => seqType(pt)
       }
       val exprAdapted = adapt(exprTyped, mode, starType)
-      exprAdapted.tpe baseType baseClass match {
+      exprAdapted.tpe.baseType(baseClass) match {
         case TypeRef(_, _, elemtp :: Nil)   => treeCopy.Typed(tree, exprAdapted, tpt setType elemtp) setType elemtp
         case _ if baseClass eq NothingClass => exprAdapted
+        case _ if baseClass eq NullClass    => treeCopy.Typed(tree, exprAdapted, tpt.setType(NothingTpe)).setType(NothingTpe)
         case _                              => setError(tree)
       }
     }
@@ -281,7 +284,7 @@ trait PatternTypers {
       // use "tree" for the context, not context.tree: don't make another CaseDef context,
       // as instantiateTypeVar's bounds would end up there
       val ctorContext = context.makeNewScope(tree, context.owner)
-      freeVars foreach ctorContext.scope.enter
+      freeVars.foreach(ctorContext.scope.enter(_))
       newTyper(ctorContext).infer.inferConstructorInstance(tree1, undetparams, ptSafe)
 
       // simplify types without losing safety,
@@ -326,7 +329,7 @@ trait PatternTypers {
               }
               val GenPolyType(freeVars, unappFormal) = freshArgType(unapplyType.skolemizeExistential(context.owner, tree))
               val unapplyContext = context.makeNewScope(tree, context.owner)
-              freeVars.foreach(unapplyContext.scope.enter)
+              freeVars.foreach(unapplyContext.scope.enter(_))
               val pattp = newTyper(unapplyContext).infer.inferTypedPattern(tree, unappFormal, pt, canRemedy = canRemedy, isUnapply = true)
               // turn any unresolved type variables in freevars into existential skolems
               val skolems = freeVars.map(fv => unapplyContext.owner.newExistentialSkolem(fv, fv))
@@ -355,6 +358,7 @@ trait PatternTypers {
           val extractedTp = glb(ensureFullyDefined(pt) :: unapplyArgTypeInferred :: Nil)
           val formals = patmat.unapplyFormals(typedApplied, args)(context)
           val typedUnapply = UnApply(typedApplied, typedArgsForFormals(args, formals, mode)) setPos tree.pos setType extractedTp
+          tree.getAndRemoveAttachment[CheckableRecheckAttachment].foreach(typedUnapply.updateAttachment(_))
 
           if (canRemedy && !(typedApplied.symbol.owner isNonBottomSubClass ClassTagClass))
             wrapClassTagUnapply(typedUnapply, remedyUncheckedWithClassTag, extractedTp)

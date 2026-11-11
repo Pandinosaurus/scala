@@ -1,4 +1,4 @@
-// scalac: -Xsource:3
+//> using options -Wconf:cat=scala3-migration:ws -Xsource:3
 
 case class A private (i: Int)
 object A {

@@ -106,15 +106,17 @@ class StringContextTest {
     assertEquals(expected, res)
   }
 
+  @annotation.nowarn("msg=Boolean format is null test for non-Boolean")
+  @Test def `non booleans as boolean`(): Unit = {
+    assertEquals("false", f"${null}%b")
+    assertEquals("FALSE", f"${null}%B")
+  }
+
   @Test def `f interpolator baseline`(): Unit = {
 
-    // ignore spurious warning scala/bug#11946
-    type ignore = annotation.unused
-    @ignore def ignore: ignore = ???  // ignore that ignore looks unused
-
-    @ignore implicit def stringToBoolean(s: String): Boolean = java.lang.Boolean.parseBoolean(s)
-    @ignore implicit def stringToChar(s: String): Char = s(0)
-    @ignore implicit def str2fmt(s: String): java.util.Formattable = new java.util.Formattable {
+    implicit def stringToBoolean(s: String): Boolean = java.lang.Boolean.parseBoolean(s)
+    implicit def stringToChar(s: String): Char = s(0)
+    implicit def str2fmt(s: String): java.util.Formattable = new java.util.Formattable {
       def formatTo(f: java.util.Formatter, g: Int, w: Int, p: Int) = f.format("%s", s)
     }
 
@@ -134,7 +136,7 @@ class StringContextTest {
     import java.util.{Calendar, Locale}
     val c = Calendar.getInstance(Locale.US)
     c.set(2012, Calendar.MAY, 26)
-    @ignore implicit def strToDate(x: String): Calendar = c
+    implicit def strToDate(x: String): Calendar = c
 
     val ss = List[(String, String)] (
       // 'b' / 'B' (category: general)
@@ -142,14 +144,12 @@ class StringContextTest {
       f"${b_false}%b" -> "false",
       f"${b_true}%b"  -> "true",
 
-      f"${null}%b"  -> "false",
       f"${false}%b" -> "false",
       f"${true}%b"  -> "true",
       f"${true && false}%b"                 -> "false",
       f"${java.lang.Boolean.valueOf(false)}%b"  -> "false",
       f"${java.lang.Boolean.valueOf(true)}%b"   -> "true",
 
-      f"${null}%B"  -> "FALSE",
       f"${false}%B" -> "FALSE",
       f"${true}%B"  -> "TRUE",
       f"${java.lang.Boolean.valueOf(false)}%B"  -> "FALSE",
@@ -221,8 +221,8 @@ class StringContextTest {
 
       f"Just want to say ${"hello, world"}%#s..." -> "Just want to say hello, world...",
 
-      { @ignore implicit val strToShort = (s: String) => java.lang.Short.parseShort(s) ; f"${"120"}%d" } -> "120",
-      { @ignore implicit val strToInt = (s: String) => 42 ; f"${"120"}%d" } -> "42",
+      { implicit val strToShort = (s: String) => java.lang.Short.parseShort(s) ; f"${"120"}%d" } -> "120",
+      { implicit val strToInt = (s: String) => 42 ; f"${"120"}%d" } -> "42",
 
       // 'e' | 'E' | 'g' | 'G' | 'f' | 'a' | 'A' (category: floating point)
       // ------------------------------------------------------------------
@@ -360,6 +360,9 @@ class StringContextTest {
       StringContext.glob(Seq("a", "bb", "c"), "abb")       -> None,
       StringContext.glob(Seq("a", "bb", "c"), "bbc")       -> None,
       StringContext.glob(Seq("a", "bb", "c"), "bbaaac")    -> None,
+
+      // Escapes!
+      StringContext.glob(Seq("Hello,\t", ""), "Hello,\tJames") -> Some(Seq("James")),
   
       // Many many ambiguous wildcards
       StringContext.glob(Seq.fill(100)("a"), "a" * 200) -> Some(Seq.fill(98)("") :+ "a" * 100)

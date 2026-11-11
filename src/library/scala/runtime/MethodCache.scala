@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -29,7 +29,7 @@ import scala.annotation.tailrec
 private[scala] sealed abstract class MethodCache {
   /** Searches for a cached method in the `MethodCache` chain that
    *  is compatible with receiver class `forReceiver`. If none is cached,
-   *  `null` is returned. If `null` is returned, find's caller should look-
+   *  `null` is returned. If `null` is returned, `find`'s caller should look-
    *  up the right method using whichever means it prefers, and add it to
    *  the cache for later use. */
   def find(forReceiver: JClass[_]): JMethod
@@ -65,7 +65,7 @@ private[scala] final class PolyMethodCache(
 ) extends MethodCache {
 
   /** To achieve tail recursion this must be a separate method
-   *  from `find`, because the type of next is not `PolyMethodCache`.
+   *  from `find`, because the type of `next` is not `PolyMethodCache`.
    */
   @tailrec private def findInternal(forReceiver: JClass[_]): JMethod =
     if (forReceiver eq receiver) method

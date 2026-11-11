@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -67,6 +67,6 @@ class ReflectGlobal(currentSettings: Settings, reporter: Reporter, override val 
   override type RuntimeClass = java.lang.Class[_]
   override implicit val RuntimeClassTag: ClassTag[RuntimeClass] = ClassTag[RuntimeClass](classOf[RuntimeClass])
 
-  override def openPackageModule(pkgClass: Symbol, force: Boolean): Unit = super.openPackageModule(pkgClass, true)
+  override def openPackageModule(pkgClass: Symbol, force: Boolean): Unit = super.openPackageModule(pkgClass, force = true)
 }
 

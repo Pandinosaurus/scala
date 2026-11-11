@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -97,7 +97,7 @@ trait Plugins { global: Global =>
     val cache = pluginClassLoadersCache
     val checkStamps = policy == settings.CachePolicy.LastModified.name
     cache.checkCacheability(classpath.map(_.toURL), checkStamps, disableCache) match {
-      case Left(msg) =>
+      case Left(_) =>
         val loader = newLoader()
         closeableRegistry.registerCloseable(loader)
         loader
@@ -122,7 +122,7 @@ trait Plugins { global: Global =>
         def withPlug          = plug :: pick(tail, plugNames + plug.name, phaseNames ++ plugPhaseNames)
         lazy val commonPhases = phaseNames intersect plugPhaseNames
 
-        def note(msg: String): Unit = if (settings.verbose) inform(msg format plug.name)
+        def note(msg: String): Unit = if (settings.verbose.value) inform(msg format plug.name)
         def fail(msg: String)       = { note(msg) ; withoutPlug }
 
         if (plugNames contains plug.name)
@@ -182,7 +182,7 @@ trait Plugins { global: Global =>
   def findMacroClassLoader(): ClassLoader = {
     val classpath: Seq[URL] = if (settings.YmacroClasspath.isSetByUser) {
       for {
-        file <- ClassPath.expandPath(settings.YmacroClasspath.value, true)
+        file <- ClassPath.expandPath(settings.YmacroClasspath.value, expandStar = true)
         af <- Option(settings.pathFactory.getDirectory(file))
       } yield af.file.toURI.toURL
     } else global.classPath.asURLs

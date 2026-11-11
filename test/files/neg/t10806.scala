@@ -1,5 +1,4 @@
-/* scalac: -Xfatal-warnings
- */
+//> using options -Werror
 
 trait T {
 

@@ -3,6 +3,8 @@ package scala.collection
 import org.junit.Assert._
 import org.junit.Test
 
+import scala.tools.testkit.AssertUtil.{assertFails, assertNotReachable}
+
 class MapTest {
   @deprecated("Tests deprecated API", since="2.13")
   @Test def test(): Unit = {
@@ -51,7 +53,7 @@ class MapTest {
     val m1 = m ++: m
     assertEquals(m.toList.sorted, (m1: Map[Int, Int]).toList.sorted)
     val s1: Iterable[Any] = List(1) ++: m
-    assertEquals(1 :: m.toList.sorted, s1.toList.sortBy { case (x: Int, _) => x ; case x: Int => x })
+    assertEquals(::[Any](1, m.toList.sorted), s1.toList.sortBy { case (x: Int, _) => x ; case x: Int => x })
   }
 
   @Test
@@ -128,4 +130,10 @@ class MapTest {
     assertFalse(Set("") == immutable.BitSet(1))
     assertFalse(Map("" -> 2) == scala.collection.immutable.LongMap(1L -> 2))
   }
+
+  @Test def `map is reachable from its keyset`: Unit =
+    assertFails(_.contains("held reference")) {
+      val m = Map("one" -> "eins")
+      assertNotReachable(m, m.keySet)(())
+    }
 }

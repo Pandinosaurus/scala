@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -131,10 +131,11 @@ private[async] trait AnfTransform extends TransformUtils {
             case ld: LabelDef if ld.tpe.typeSymbol == definitions.BoxedUnitClass =>
               currentStats += ld
               literalBoxedUnit
-            case ld: LabelDef if ld.tpe.typeSymbol == definitions.UnitClass      =>
+            case ld: LabelDef if ld.tpe.typeSymbol == definitions.UnitClass =>
               currentStats += ld
               literalUnit
-            case expr                                                            => expr
+            case expr1 =>
+              expr1
           }
 
         case ValDef(mods, name, tpt, rhs) => atOwner(tree.symbol) {
@@ -176,7 +177,7 @@ private[async] trait AnfTransform extends TransformUtils {
             treeCopy.Match(tree, scrutExpr, casesWithAssign)
           }
 
-        case ld@LabelDef(name, params, rhs) =>
+        case LabelDef(name, params, rhs) =>
           treeCopy.LabelDef(tree, name, params, transformNewControlFlowBlock(rhs))
         case t@Typed(expr, tpt)             =>
           transform(expr).setType(t.tpe)
@@ -204,7 +205,10 @@ private[async] trait AnfTransform extends TransformUtils {
       if (isPatMatGeneratedJump(tree)) assignUnitType(tree)
 
       if (!needsResultVar || isUnitType(tree.tpe) || (tree.tpe =:= definitions.NothingTpe)) {
-        core(NoSymbol)
+        if (tree.tpe =:= definitions.BoxedUnitTpe) {
+          currentStats += assignUnitType(core(NoSymbol))
+          literalBoxedUnit
+        } else core(NoSymbol)
       } else {
         val varDef = defineVar(nameSource(), tree.tpe, tree.pos)
         currentStats += varDef
@@ -266,7 +270,8 @@ private[async] trait AnfTransform extends TransformUtils {
           onTail(ts)
         case i =>
           val group = new Array[T](i + 1)
-          ts.copyToArray(group)
+          @annotation.unused val copied = ts.copyToArray(group)
+          //assert(copied == group.length, s"$copied != ${group.length}")
           onGroup(group)
           foreachGroupsEndingWith(ts.drop(i + 1))(isGroupEnd, onGroup, onTail)
       }
@@ -313,11 +318,11 @@ private[async] trait AnfTransform extends TransformUtils {
       val statsExpr0: ArrayBuffer[Tree] = new ArrayBuffer[Tree](statsExpr.length)
 
       statsExpr.reverseIterator.foreach {
-        case ld@LabelDef(_, param :: Nil, _) =>
+        case ld@LabelDef(_, _ :: Nil, _) =>
           val (ld1, after) = modifyLabelDef(ld)
           statsExpr0 += after
           statsExpr0 += ld1
-        case a@ValDef(mods, name, tpt, ld@LabelDef(_, param :: Nil, _)) =>
+        case a@ValDef(mods, name, tpt, ld@LabelDef(_, _ :: Nil, _)) =>
           val (ld1, after) = modifyLabelDef(ld)
           statsExpr0 += treeCopy.ValDef(a, mods, name, tpt, after)
           statsExpr0 += ld1

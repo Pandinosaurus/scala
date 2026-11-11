@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,15 +13,16 @@
 package scala.tools.nsc
 package typechecker
 
-import scala.tools.nsc.symtab.Flags
+import scala.annotation._
 import scala.collection.mutable
+import scala.tools.nsc.symtab.Flags
 
 /** Duplicate trees and re-type check them, taking care to replace
  *  and create fresh symbols for new local definitions.
  *
  *  @author  Iulian Dragos
  */
-abstract class Duplicators extends Analyzer {
+abstract class Duplicators extends AbstractAnalyzer {
   import global._
   import definitions._
 
@@ -58,7 +59,7 @@ abstract class Duplicators extends Analyzer {
   private var envSubstitution: SubstTypeMap = _
 
   private class SubstSkolemsTypeMap(from: List[Symbol], to: List[Type]) extends SubstTypeMap(from, to) {
-    protected override def matches(sym1: Symbol, sym2: Symbol) =
+    override protected def matches(sym1: Symbol, sym2: Symbol) =
       if (sym2.isTypeSkolem) sym2.deSkolemize eq sym1
       else sym1 eq sym2
   }
@@ -195,7 +196,7 @@ abstract class Duplicators extends Analyzer {
     /** Optionally cast this tree into some other type, if required.
      *  Unless overridden, just returns the tree.
      */
-    def castType(tree: Tree, pt: Type): Tree = tree
+    def castType(tree: Tree, @unused pt: Type): Tree = tree
 
     /** Special typer method for re-type checking trees. It expects a typed tree.
      *  Returns a typed tree that has fresh symbols for all definitions in the original tree.
@@ -293,7 +294,7 @@ abstract class Duplicators extends Analyzer {
           tree.symbol = updateSym(origtreesym)
           super.typed(tree.clearType(), mode, pt)
 
-        case Select(th @ This(_), sel) if (oldClassOwner ne null) && (th.symbol == oldClassOwner) =>
+        case Select(th @ This(_), _) if (oldClassOwner ne null) && (th.symbol == oldClassOwner) =>
           // We use the symbol name instead of the tree name because the symbol
           // may have been name mangled, rendering the tree name obsolete.
           // ...but you can't just do a Select on a name because if the symbol is
@@ -313,7 +314,7 @@ abstract class Duplicators extends Analyzer {
                 case ((alt, tpe)) :: Nil =>
                   log(s"Arrested overloaded type in Duplicators, narrowing to ${alt.defStringSeenAs(tpe)}\n  Overload was: $memberString")
                   Select(This(newClassOwner), alt)
-                case xs =>
+                case _ =>
                   alts filter (alt => (alt.paramss corresponds tree.symbol.paramss)(_.size == _.size)) match {
                     case alt :: Nil =>
                       log(s"Resorted to parameter list arity to disambiguate to $alt\n  Overload was: $memberString")
@@ -354,7 +355,7 @@ abstract class Duplicators extends Analyzer {
           val scrutTpe = scrut1.tpe.widen
           val cases1 = {
             if (scrutTpe.isFinalType) cases filter {
-              case CaseDef(Bind(_, pat @ Typed(_, tpt)), EmptyTree, body) =>
+              case CaseDef(Bind(_, Typed(_, tpt)), EmptyTree, body) =>
                 // the typed pattern is not incompatible with the scrutinee type
                 scrutTpe matchesPattern fixType(tpt.tpe)
               case CaseDef(Typed(_, tpt), EmptyTree, body) =>

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -18,13 +18,13 @@ import scala.reflect.internal.util.shortClassOfInstance
 import scala.reflect.internal.util.StringOps._
 import scala.tools.nsc.Reporting.WarningCategory
 
-abstract class TreeCheckers extends Analyzer {
+abstract class TreeCheckers extends AbstractAnalyzer {
   import global._
 
   override protected def onTreeCheckerError(pos: Position, msg: String): Unit = {
     // could thread the `site` through ContextReporter for errors, like we do for warnings, but it
     // looks like an overkill since it would only be used here.
-    if (settings.fatalWarnings)
+    if (settings.fatalWarnings.value)
       runReporting.warning(pos, "\n** Error during internal checking:\n" + msg, WarningCategory.OtherDebug, site = "")
   }
 
@@ -177,7 +177,7 @@ abstract class TreeCheckers extends Analyzer {
   def errorFn(msg: Any): Unit                = errorFn(NoPosition, msg)
 
   def informFn(msg: Any): Unit = {
-    if (settings.verbose || settings.isDebug)
+    if (settings.verbose.value || settings.isDebug)
       println("[check: %s] %s".format(phase.prev, msg))
   }
 
@@ -195,7 +195,7 @@ abstract class TreeCheckers extends Analyzer {
   }
 
   def checkTrees(): Unit = {
-    if (settings.verbose)
+    if (settings.verbose.value)
       Console.println("[consistency check at the beginning of phase " + phase + "]")
 
     currentRun.units foreach (x => wrap(x)(check(x)))
@@ -324,7 +324,7 @@ abstract class TreeCheckers extends Analyzer {
             if (args exists (_ == EmptyTree))
               errorFn(tree.pos, "Apply arguments to " + fn + " contains an empty tree: " + args)
 
-          case Select(qual, name) =>
+          case Select(_, _) =>
             checkSym(tree)
           case This(_) =>
             checkSym(tree)
@@ -406,7 +406,7 @@ abstract class TreeCheckers extends Analyzer {
           val fmt = "%-" + width + "s"
           val lines = pairs map {
             case (s: Symbol, msg) => fmt.format(msg) + "  in  " + ownersString(s)
-            case (x, msg)         => fmt.format(msg)
+            case (_, msg)         => fmt.format(msg)
           }
           lines.mkString("Out of scope symbol reference {\n", "\n", "\n}")
         }

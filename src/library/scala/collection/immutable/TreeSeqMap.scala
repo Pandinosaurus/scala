@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -362,7 +362,7 @@ object TreeSeqMap extends MapFactory[TreeSeqMap] {
 
   /* The ordering implementation below is an adapted version of immutable.IntMap. */
   private[immutable] object Ordering {
-    import scala.collection.generic.BitOperations.Int._
+    import scala.collection.generic.BitOperations.Int.{Int => _, _}
 
     @inline private[immutable] def toBinaryString(i: Int): String = s"$i/${i.toBinaryString}"
 
@@ -392,10 +392,11 @@ object TreeSeqMap extends MapFactory[TreeSeqMap] {
 
       if (it != Zero) push(it)
 
-      def hasNext = index != 0
+      def hasNext = index > 0
       @tailrec
       def next(): V =
-        pop match {
+        if (!hasNext) scala.collection.Iterator.empty.next()
+        else pop match {
           case Bin(_,_, Tip(_, v), right) =>
             push(right)
             v

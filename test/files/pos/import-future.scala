@@ -1,5 +1,4 @@
-// scalac: -Xsource:3
-//
+//> using options -Xsource:3
 
 import java.io as jio
 import scala.{collection as c}
@@ -26,8 +25,36 @@ class C {
 
 object starring {
 
-  import scala.concurrent.{*, given}, duration.{given, Duration as D, *}, ExecutionContext.Implicits.*
+  import scala.concurrent.{*, given}, duration.{Duration as D, given, *}, ExecutionContext.Implicits.*
 
   val f = Future(42)
   val r = Await.result(f, D.Inf)
+}
+
+trait T[A] {
+  def t: A
+}
+object T {
+  implicit def tInt: T[Int] = new T[Int] {
+    def t: Int = 42
+  }
+  def f[A](implicit t: T[A]): A = t.t
+}
+object X {
+  import T.given
+  def g = T.f[Int] // was given is not a member
+}
+
+class status_quo {
+  import scala.util.chaining._
+  import scala.concurrent.duration._
+  def f = 42.tap(println)
+  def g = 42.seconds
+}
+
+class givenly {
+  import scala.util.chaining.given
+  import scala.concurrent.duration.given
+  def f = 42.tap(println)
+  def g = 42.seconds
 }

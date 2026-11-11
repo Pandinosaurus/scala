@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -35,6 +35,7 @@ private[concurrent] object ExecutionContextImpl {
 
     private final val blockerPermits = new Semaphore(maxBlockers)
 
+    @annotation.nowarn("cat=deprecation")
     def wire[T <: Thread](thread: T): T = {
       thread.setDaemon(daemonic)
       thread.setUncaughtExceptionHandler(uncaught)

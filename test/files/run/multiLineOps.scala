@@ -1,8 +1,8 @@
-// scalac: -Xsource:3
-//
+//> using options -Xsource:3 -Xsource-features:leading-infix
+
 // was: without backticks, "not found: value +" (but parsed here as +a * 6, where backticks fool the lexer)
 // now: + is taken as "solo" infix op
-//
+
 object Test extends App {
   val a = 7
   val x = 1

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -22,7 +22,7 @@ package runtime
 private[scala] trait SymbolTable extends internal.SymbolTable with JavaMirrors with SymbolLoaders with SynchronizedOps with Gil with ThreadLocalStorage {
 
   def info(msg: => String) =
-    if (settings.verbose) println("[reflect-compiler] "+msg)
+    if (settings.verbose.value) println("[reflect-compiler] "+msg)
 
   def debugInfo(msg: => String) =
     if (settings.isDebug) info(msg)

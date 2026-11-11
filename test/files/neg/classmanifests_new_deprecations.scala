@@ -1,4 +1,4 @@
-// scalac: -deprecation -Xfatal-warnings
+//> using options -Xlint -Werror
 //
 object Test extends App {
   def rcm1[T: scala.reflect.ClassManifest] = ???

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -166,4 +166,4 @@ object InlineInfoAttribute {
  * In order to instruct the ASM framework to deserialize the ScalaInlineInfo attribute, we need
  * to pass a prototype instance when running the class reader.
  */
-object InlineInfoAttributePrototype extends InlineInfoAttribute(InlineInfo(false, null, null, null))
+object InlineInfoAttributePrototype extends InlineInfoAttribute(InlineInfo(isEffectivelyFinal = false, sam = null, methodInfos = null, warning = null))

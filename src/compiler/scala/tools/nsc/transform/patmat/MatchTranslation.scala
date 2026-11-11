@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -10,7 +10,10 @@
  * additional information regarding copyright ownership.
  */
 
-package scala.tools.nsc.transform.patmat
+package scala.tools.nsc
+package transform.patmat
+
+import scala.annotation._
 
 /** Translate typed Trees that represent pattern matches into the patternmatching IR, defined by TreeMakers.
  */
@@ -67,11 +70,10 @@ trait MatchTranslation {
       def pos     = tree.pos
       def tpe     = binder.info.dealias // the type of the variable bound to the pattern
       def pt      = unbound match {
-        case Star(tpt)      => this glbWith seqType(tpt.tpe)
+        case Star(tpt)      => seqType(tpt.tpe)
         case TypeBound(tpe) => tpe
-        case tree           => tree.tpe
+        case unbound        => unbound.tpe
       }
-      def glbWith(other: Type) = glb(tpe :: other :: Nil).normalize
 
       object SymbolAndTypeBound {
         def unapply(tree: Tree): Option[(Symbol, Type)] = tree match {
@@ -93,10 +95,10 @@ trait MatchTranslation {
 
       private def bindingStep(sub: Symbol, subpattern: Tree) = step(SubstOnlyTreeMaker(sub, binder))(rebindTo(subpattern))
       private def equalityTestStep()                         = step(EqualityTestTreeMaker(binder, tree, pos))()
-      private def typeTestStep(sub: Symbol, subPt: Type)     = step(TypeTestTreeMaker(sub, binder, subPt, glbWith(subPt))(pos))()
+      private def typeTestStep(sub: Symbol, subPt: Type)     = step(TypeTestTreeMaker(sub, binder, subPt, subPt)(pos))()
       private def alternativesStep(alts: List[Tree])         = step(AlternativesTreeMaker(binder, translatedAlts(alts), alts.head.pos))()
       private def translatedAlts(alts: List[Tree])           = alts map (alt => rebindTo(alt).translate())
-      private def noStep()                                   = step()()
+      private def noStep()                                   = step(DummyTreeMaker)()
 
       private def unsupportedPatternMsg = sm"""
         |unsupported pattern: ${tree.shortClass} / $this (this is a scalac bug.)
@@ -186,11 +188,11 @@ trait MatchTranslation {
       val Match(selector, cases) = match_
 
       val (nonSyntheticCases, defaultOverride) = cases match {
-        case init :+ last if treeInfo isSyntheticDefaultCase last => (init, Some(((scrut: Tree) => last.body)))
+        case init :+ last if treeInfo isSyntheticDefaultCase last => (init, Some(((_: Tree) => last.body)))
         case _                                                    => (cases, None)
       }
 
-      if (!settings.XnoPatmatAnalysis) checkMatchVariablePatterns(nonSyntheticCases)
+      if (!settings.XnoPatmatAnalysis.value) checkMatchVariablePatterns(nonSyntheticCases)
 
       // we don't transform after uncurry
       // (that would require more sophistication when generating trees,
@@ -198,7 +200,7 @@ trait MatchTranslation {
       if (phase.id >= currentRun.uncurryPhase.id)
         devWarning(s"running translateMatch past uncurry (at $phase) on $selector match $cases")
 
-      debug.patmat("translating "+ cases.mkString("{", "\n", "}"))
+      debug.patmat(cases.mkString("translating {", "\n", "}"))
 
       val start = if (settings.areStatisticsEnabled) statistics.startTimer(statistics.patmatNanos) else null
 
@@ -229,7 +231,7 @@ trait MatchTranslation {
       // if they're already simple enough to be handled by the back-end, we're done
       if (caseDefs forall treeInfo.isCatchCase) {
         // well, we do need to look for unreachable cases
-        if (!settings.XnoPatmatAnalysis) unreachableTypeSwitchCase(caseDefs).foreach(cd => reportUnreachable(cd.body.pos))
+        if (!settings.XnoPatmatAnalysis.value) unreachableTypeSwitchCase(caseDefs).foreach(cd => reportUnreachable(cd.body.pos))
 
         caseDefs
       } else {
@@ -252,20 +254,21 @@ trait MatchTranslation {
         val catches = if (swatches.nonEmpty) swatches else {
           val scrutSym = freshSym(caseDefs.head.pat.pos, ThrowableTpe)
           val cases    = caseDefs.map(translateCase(scrutSym, pt))
+          val casesPos = wrappingPos(caseDefs)
 
           val exSym = freshSym(pos, ThrowableTpe, "ex")
           val suppression =
-            if (settings.XnoPatmatAnalysis) Suppression.FullSuppression
+            if (settings.XnoPatmatAnalysis.value) Suppression.FullSuppression
             else Suppression.NoSuppression.copy(suppressExhaustive = true) // try/catches needn't be exhaustive
 
-          List(
-              atPos(pos) {
-                CaseDef(
-                  Bind(exSym, Ident(nme.WILDCARD)), // TODO: does this need fixing upping?
-                  EmptyTree,
-                  combineCases(REF(exSym), scrutSym, cases, pt, selectorPos, matchOwner, Some(scrut => Throw(REF(exSym))), suppression)
-                )
-              })
+          val combo = combineCases(REF(exSym), scrutSym, cases, pt, selectorPos, matchOwner, Some(_ => Throw(REF(exSym))), suppression)
+          List(atPos(casesPos) {
+            CaseDef(
+              Bind(exSym, Ident(nme.WILDCARD)), // TODO: does this need fixing upping?
+              EmptyTree,
+              combo
+            )
+          })
         }
 
         typer.typedCases(catches, ThrowableTpe, WildcardType)
@@ -402,7 +405,7 @@ trait MatchTranslation {
       private def genDrop(binder: Symbol, n: Int): List[Tree]         = codegen.drop(seqTree(binder, forceImmutable = false))(n) :: Nil
 
       // codegen.drop(seqTree(binder))(nbIndexingIndices)))).toList
-      protected def seqTree(binder: Symbol, forceImmutable: Boolean) = tupleSel(binder)(firstIndexingBinder + 1)
+      protected def seqTree(binder: Symbol, @unused forceImmutable: Boolean) = tupleSel(binder)(firstIndexingBinder + 1)
       protected def tupleSel(binder: Symbol)(i: Int): Tree           = codegen.tupleSel(binder)(i)
 
       // the trees that select the subpatterns on the extractor's result,

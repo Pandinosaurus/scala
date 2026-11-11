@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -76,7 +76,7 @@ private[scala] object FutureConvertersImpl {
       * @inheritdoc
       *
       * WARNING: completing the result of this method will not complete the underlying
-      *          Scala Future or Promise (ie, the one that that was passed to `toJava`.)
+      *          Scala `Future` or `Promise` (ie, the one that that was passed to `toJava`.)
       */
     override def toCompletableFuture: CompletableFuture[T] = this
 
@@ -91,8 +91,8 @@ private[scala] object FutureConvertersImpl {
     override def toString(): String = super[CompletableFuture].toString
   }
 
-  final class P[T](val wrapped: CompletionStage[T]) extends DefaultPromise[T] with BiConsumer[T, Throwable] {
-    override def accept(v: T, e: Throwable): Unit = {
+  final class P[T](val wrapped: CompletionStage[T]) extends DefaultPromise[T] with BiFunction[T, Throwable, Unit] {
+    override def apply(v: T, e: Throwable): Unit = {
       if (e == null) success(v)
       else failure(e)
     }

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -255,7 +255,7 @@ class Random(val self: java.util.Random) extends AnyRef with Serializable {
 }
 
 /** The object `Random` offers a default implementation
- *  of scala.util.Random and random-related convenience methods.
+ *  of `scala.util.Random` and random-related convenience methods.
  */
 object Random extends Random {
 

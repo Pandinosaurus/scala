@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,10 +13,11 @@
 package scala
 package tools.nsc.transform.patmat
 
-import scala.collection.mutable
 import scala.collection.immutable.ArraySeq
+import scala.collection.{IterableOps, mutable}
 import scala.reflect.internal.util.Collections._
 import scala.reflect.internal.util.HashSet
+import scala.tools.nsc.transform.patmat.Logic.LogicLinkedHashSet
 
 trait Logic extends Debugging {
   import global._
@@ -113,24 +114,21 @@ trait Logic extends Debugging {
       def implications: List[(Sym, List[Sym], List[Sym])]
     }
 
+    // Using LogicLinkedHashSet (a custom mutable.LinkedHashSet subclass) to ensure deterministic exhaustivity
+    // messages. immutable.ListSet was too slow (concatenate cost? scala/bug#12499).
+
     // would be nice to statically check whether a prop is equational or pure,
     // but that requires typing relations like And(x: Tx, y: Ty) : (if(Tx == PureProp && Ty == PureProp) PureProp else Prop)
-    final case class And(ops: Set[Prop]) extends Prop
+    final case class And(ops: LogicLinkedHashSet[Prop]) extends Prop
     object And {
       def apply(ps: Prop*)           = create(ps)
-      def create(ps: Iterable[Prop]) = ps match {
-        case ps: Set[Prop] => new And(ps)
-        case _             => new And(ps.to(scala.collection.immutable.ListSet))
-      }
+      def create(ps: Iterable[Prop]) = new And(ps.to(LogicLinkedHashSet))
     }
 
-    final case class Or(ops: Set[Prop]) extends Prop
+    final case class Or(ops: LogicLinkedHashSet[Prop]) extends Prop
     object Or {
       def apply(ps: Prop*)           = create(ps)
-      def create(ps: Iterable[Prop]) = ps match {
-        case ps: Set[Prop] => new Or(ps)
-        case _             => new Or(ps.to(scala.collection.immutable.ListSet))
-      }
+      def create(ps: Iterable[Prop]) = new Or(ps.to(LogicLinkedHashSet))
     }
 
     final case class Not(a: Prop) extends Prop
@@ -197,7 +195,7 @@ trait Logic extends Debugging {
      */
     def simplify(f: Prop): Prop = {
 
-      def hasImpureAtom(ops0: collection.Iterable[Prop]): Boolean = {
+      def hasImpureAtom(ops0: Iterable[Prop]): Boolean = {
         // HOT method, imperative rewrite of:
         // ops.combinations(2).exists {
         //   case Seq(a, Not(b)) if a == b => true
@@ -232,7 +230,8 @@ trait Logic extends Debugging {
           checkPair(a, b) || checkPair(a, c) || checkPair(b, c)
         } else {
           val ops = new Array[Prop](size)
-          ops0.copyToArray(ops)
+          @annotation.unused val copied = ops0.copyToArray(ops)
+          //assert(copied == ops.length, "")
           var i = 0
           val len = ops.length
           while (i < len - 1) {
@@ -247,7 +246,7 @@ trait Logic extends Debugging {
         }
       }
 
-      def mapConserve[A <: AnyRef](s: Set[A])(f: A => A): Set[A] = {
+      def mapConserve[CC[X] <: IterableOps[X, CC, CC[X]], A <: AnyRef](s: CC[A])(f: A => A): CC[A] = {
         var changed = false
         val s1 = s.map {a =>
           val a1 = f(a)
@@ -284,10 +283,10 @@ trait Logic extends Debugging {
              | (_: AtMostOne)   => p
       }
 
-      def simplifyAnd(ps: Set[Prop]): Prop = {
+      def simplifyAnd(ps: Iterable[Prop]): Prop = {
         // recurse for nested And (pulls all Ands up)
         // build up Set in order to remove duplicates
-        val props = mutable.LinkedHashSet.empty[Prop]
+        val props = LogicLinkedHashSet.empty[Prop]
         for (prop <- ps) {
           simplifyProp(prop) match {
             case True    => // ignore `True`
@@ -300,10 +299,10 @@ trait Logic extends Debugging {
         else /\(props)
       }
 
-      def simplifyOr(ps: Set[Prop]): Prop = {
+      def simplifyOr(ps: Iterable[Prop]): Prop = {
         // recurse for nested Or (pulls all Ors up)
         // build up Set in order to remove duplicates
-        val props = mutable.LinkedHashSet.empty[Prop]
+        val props = LogicLinkedHashSet.empty[Prop]
         for (prop <- ps) {
           simplifyProp(prop) match {
             case False  => // ignore `False`
@@ -344,7 +343,7 @@ trait Logic extends Debugging {
     }
 
     def gatherVariables(p: Prop): collection.Set[Var] = {
-      val vars = new mutable.LinkedHashSet[Var]()
+      val vars = new LogicLinkedHashSet[Var]()
       (new PropTraverser {
         override def applyVar(v: Var) = vars += v
       })(p)
@@ -352,7 +351,7 @@ trait Logic extends Debugging {
     }
 
     def gatherSymbols(p: Prop): collection.Set[Sym] = {
-      val syms = new mutable.LinkedHashSet[Sym]()
+      val syms = new LogicLinkedHashSet[Sym]()
       (new PropTraverser {
         override def applySymbol(s: Sym) = syms += s
       })(p)
@@ -410,7 +409,7 @@ trait Logic extends Debugging {
     def removeVarEq(props: List[Prop], modelNull: Boolean = false): (Prop, List[Prop]) = {
       val start = if (settings.areStatisticsEnabled) statistics.startTimer(statistics.patmatAnaVarEq) else null
 
-      val vars = new mutable.LinkedHashSet[Var]
+      val vars = new LogicLinkedHashSet[Var]
 
       object gatherEqualities extends PropTraverser {
         override def apply(p: Prop) = p match {
@@ -514,6 +513,31 @@ trait Logic extends Debugging {
     def hasModel(solvable: Solvable): Boolean
 
     def findAllModelsFor(solvable: Solvable, sym: Symbol = NoSymbol): List[Solution]
+  }
+}
+
+object Logic {
+  import scala.annotation.nowarn
+  import scala.collection.mutable.{Growable, GrowableBuilder, SetOps}
+  import scala.collection.{IterableFactory, IterableFactoryDefaults, StrictOptimizedIterableOps}
+
+  // Local subclass because we can't override `addAll` in the collections (bin compat), see PR scala/scala#10361
+  @nowarn("msg=inheritance from class LinkedHashSet")
+  class LogicLinkedHashSet[A] extends mutable.LinkedHashSet[A]
+    with SetOps[A, LogicLinkedHashSet, LogicLinkedHashSet[A]]
+    with StrictOptimizedIterableOps[A, LogicLinkedHashSet, LogicLinkedHashSet[A]]
+    with IterableFactoryDefaults[A, LogicLinkedHashSet] {
+    override def iterableFactory: IterableFactory[LogicLinkedHashSet] = LogicLinkedHashSet
+    override def addAll(xs: IterableOnce[A]): this.type = {
+      sizeHint(xs)
+      super.addAll(xs)
+    }
+  }
+
+  object LogicLinkedHashSet extends IterableFactory[LogicLinkedHashSet] {
+    override def from[A](source: IterableOnce[A]): LogicLinkedHashSet[A] = Growable.from(empty[A], source)
+    override def empty[A]: LogicLinkedHashSet[A] = new LogicLinkedHashSet[A]
+    override def newBuilder[A]: mutable.Builder[A, LogicLinkedHashSet[A]] = new GrowableBuilder(empty[A])
   }
 }
 
@@ -734,8 +758,8 @@ trait ScalaLogic extends Interface with Logic with TreeAndTypeAnalysis {
     }
 
 
-    import global.{ConstantType, SingletonType, Literal, Ident, singleType, TypeBounds, NoSymbol}
     import global.definitions._
+    import global.{ConstantType, Ident, Literal, NoSymbol, SingletonType, TypeBounds, singleType}
 
 
     // all our variables range over types

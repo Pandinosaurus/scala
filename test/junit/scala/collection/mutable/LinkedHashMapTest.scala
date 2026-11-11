@@ -3,13 +3,15 @@ package scala.collection.mutable
 import org.junit.Assert._
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
-import org.junit.{ Assert, Test }
+import org.junit.{Assert, Test}
 
+import scala.annotation.nowarn
 import scala.collection.mutable
 
 /* Test for scala/bug#9095 */
 @RunWith(classOf[JUnit4])
 class LinkedHashMapTest {
+  @nowarn("msg=inheritance from class LinkedHashMap")
   class TestClass extends mutable.LinkedHashMap[String, Int] {
     def lastItemRef = lastEntry
   }
@@ -106,7 +108,7 @@ class LinkedHashMapTest {
 
     val hashMapCollide2 = mutable.LinkedHashMap(0 -> "a", (null: Any) -> "b", "" -> "c")
     assertEquals(hashMapCollide2.updateWith((null: Any))(noneAnytime), None)
-    assertEquals(hashMapCollide2, mutable.LinkedHashMap(0 -> "a", "" -> "c"))
+    assertEquals(hashMapCollide2, mutable.LinkedHashMap[Any, String](0 -> "a", "" -> "c"))
 
     val hashMapCollide3 = mutable.LinkedHashMap(0 -> "a", (null: Any) -> "b", "" -> "c")
     assertEquals(hashMapCollide3.updateWith("")(noneAnytime), None)
@@ -166,5 +168,19 @@ class LinkedHashMapTest {
     assertEquals(2, count) // once during hashtable construction, once during updateWith
     assertEquals(hashMapCount4, mutable.LinkedHashMap(countingKey1 -> "a"))
 
+  }
+
+  @Test
+  def testfromfactorymethod(): Unit = {
+    val data = List((1, 'a'), (2,'b'),(3,'c'), (4,'d'),(5,'e'),(6,'f'))
+    val lhm = new mutable.LinkedHashMap[Int, Char]
+    data.foreach(x => lhm.addOne(x))
+
+    val fromlhm1 = LinkedHashMap.from(data)
+    assertEquals(fromlhm1, lhm)
+
+    val fromlhm2 = LinkedHashMap.from(lhm)
+    assertEquals(fromlhm2, lhm)
+    assertFalse(fromlhm2 eq lhm)
   }
 }

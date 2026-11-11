@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -15,6 +15,7 @@ package nsc
 package doc
 
 import scala.reflect.internal.util._
+import scala.tools.nsc.backend.JavaPlatform
 import scala.tools.nsc.doc.DocParser.Parsed
 import scala.tools.nsc.reporters.{ConsoleReporter, Reporter}
 
@@ -23,13 +24,24 @@ import scala.tools.nsc.reporters.{ConsoleReporter, Reporter}
  *  otherwise cause the compiler to go haywire.
  */
 class DocParser(settings: nsc.Settings, reporter: Reporter) extends Global(settings, reporter) with ScaladocGlobalTrait {
+  self =>
   def this(settings: Settings) = this(settings, new ConsoleReporter(settings))
   def this() = this(new Settings(Console println _))
 
   // the usual global initialization
   locally { new Run() }
 
-  override protected def computeInternalPhases(): Unit = phasesSet += syntaxAnalyzer
+  override protected def computeInternalPhases(): Unit = {
+    phasesSet += syntaxAnalyzer
+    phasesSet += terminal
+  }
+  override protected def computePluginPhases(): Unit = ()
+
+  override lazy val platform: ThisPlatform =
+    new JavaPlatform {
+      lazy val global: self.type = self
+      override def platformPhases = Nil // used by computePlatformPhases
+    }
 
   /** Returns a list of `DocParser.Parseds`, which hold the DocDefs found
    *  in the given code along with the surrounding trees.

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -40,9 +40,7 @@ object Signature {
     * @param result represents the type of the method result
     */
   case class MethodSignature[T] private[Signature](params: List[ParamSig[T]], result: T) extends Signature[T] {
-    def map[U](f: T => U): MethodSignature[U] = this match {
-      case MethodSignature(params, result) => MethodSignature(params.map(_.map(f)), f(result))
-    }
+    def map[U](f: T => U): MethodSignature[U] = MethodSignature(params.map(_.map(f)), f(result))
   }
 
 }

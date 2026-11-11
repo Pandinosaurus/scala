@@ -1,4 +1,4 @@
-// scalac: -Yrangepos
+//
 //
 import scala.language.implicitConversions
 

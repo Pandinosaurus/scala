@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -11,6 +11,8 @@
  */
 
 package scala.beans
+
+import scala.annotation.meta.{beanGetter, beanSetter, field}
 
 /** When attached to a field, this annotation adds a setter and a getter
  *  method following the Java Bean convention. For example:
@@ -25,7 +27,12 @@ package scala.beans
  *  }}}
  *  For fields of type `Boolean`, if you need a getter named `isStatus`,
  *  use the `scala.beans.BooleanBeanProperty` annotation instead.
+ *
+ *  In Scala 2, the added methods are visible from both Scala and Java.
+ *
+ *  In Scala 3, that has changed. The added methods are only visible from
+ *  Java (including via Java reflection).
  */
-@scala.annotation.meta.field
+@field @beanGetter @beanSetter
 @deprecatedInheritance("Scheduled for being final in the future", "2.13.0")
 class BeanProperty extends scala.annotation.StaticAnnotation

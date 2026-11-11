@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -25,7 +25,7 @@ trait PerRunInit {
   // so the back end may initialise them in parallel, and ListBuffer is not threadsafe
   private val inits = ListBuffer.empty[() => Unit]
 
-  def perRunInit(init: => Unit): Unit = inits.synchronized (inits += (() => init))
+  def perRunInit(init: => Unit): Unit = inits.synchronized[Unit](inits += (() => init))
 
   def initialize(): Unit = inits.synchronized(inits.foreach(_.apply()))
 }

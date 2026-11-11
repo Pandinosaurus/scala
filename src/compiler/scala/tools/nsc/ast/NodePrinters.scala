@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -39,7 +39,7 @@ abstract class NodePrinters {
   }
 
   trait DefaultPrintAST extends PrintAST {
-    val printPos = settings.Xprintpos || settings.Yposdebug
+    val printPos = settings.Xprintpos.value || settings.Yposdebug.value
 
     def showNameAndPos(tree: NameTree) = showPosition(tree) + showName(tree.name)
     def showDefTreeName(tree: DefTree) = showName(tree.name)
@@ -89,7 +89,7 @@ abstract class NodePrinters {
       tree match {
         case SelectFromTypeTree(qual, name) => showRefTreeName(qual) + "#" + showName(name)
         case Select(qual, name)             => showRefTreeName(qual) + "." + showName(name)
-        case id @ Ident(name)               => showNameAndPos(id)
+        case id: Ident                      => showNameAndPos(id)
         case _                              => "" + tree
       }
     }
@@ -107,8 +107,8 @@ abstract class NodePrinters {
 
     def stringify(tree: Tree): String = {
       buf.clear()
-      if (settings.XshowtreesStringified) buf.append(tree.toString + EOL)
-      if (settings.XshowtreesCompact) {
+      if (settings.XshowtreesStringified.value) buf.append(tree.toString + EOL)
+      if (settings.XshowtreesCompact.value) {
         buf.append(showRaw(tree, printIds = settings.uniqid, printTypes = settings.printtypes))
       } else {
         level = 0
@@ -124,6 +124,7 @@ abstract class NodePrinters {
       }
     }
     def println(s: String) = printLine(s, "")
+    def print(s: String) = buf.append(s)
 
     def printLine(value: String, comment: String): Unit = {
       buf append "  " * level
@@ -214,7 +215,7 @@ abstract class NodePrinters {
     }
 
     def traverse(tree: Tree): Unit = {
-      showPosition(tree)
+      print(showPosition(tree))
 
       tree match {
         case ApplyDynamic(fun, args)      => applyCommon(tree, fun, args)
@@ -234,7 +235,6 @@ abstract class NodePrinters {
 
         case ld @ LabelDef(name, params, rhs) =>
           printMultiline(tree) {
-            showNameAndPos(ld)
             traverseList("()", "params")(params)
             traverse(rhs)
           }
@@ -358,7 +358,7 @@ abstract class NodePrinters {
           tree match {
             case t: RefTree               => println(showRefTree(t))
             case t if t.productArity == 0 => println(treePrefix(t))
-            case t                        => printMultiline(tree)(tree.productIterator foreach traverseAny)
+            case _                        => printMultiline(tree)(tree.productIterator foreach traverseAny)
           }
       }
     }

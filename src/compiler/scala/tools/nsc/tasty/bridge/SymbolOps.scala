@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -12,10 +12,12 @@
 
 package scala.tools.nsc.tasty.bridge
 
-import scala.annotation.tailrec
+import scala.annotation._
 import scala.tools.nsc.tasty.{SafeEq, TastyUniverse, ForceKinds, TastyModes}, TastyModes._, ForceKinds._
 import scala.tools.tasty.{TastyName, Signature, TastyFlags}, TastyName.SignedName, Signature.MethodSignature, TastyFlags._
 import scala.tools.tasty.ErasedTypeRef
+
+import scala.tools.nsc.tasty.TreeUnpickler.MaybeCycle.NoCycle
 
 /**This layer deals with selecting a member symbol from a type using a `TastyName`,
  * also contains factories for making type references to symbols.
@@ -72,7 +74,7 @@ trait SymbolOps { self: TastyUniverse =>
     def isTraitParamAccessor: Boolean = sym.owner.isTrait && repr.tflags.is(FieldAccessor|ParamSetter)
 
     def isParamGetter: Boolean =
-      sym.isMethod && sym.repr.tflags.is(FlagSets.ParamGetter)
+      sym.isMethod && repr.tflags.is(FlagSets.ParamGetter)
 
     /** A computed property that should only be called on a symbol which is known to have been initialised by the
      *  Tasty Unpickler and is not yet completed.
@@ -82,7 +84,7 @@ trait SymbolOps { self: TastyUniverse =>
     def repr: TastyRepr = {
       try sym.rawInfo.asInstanceOf[TastyRepr]
       catch {
-        case err: ClassCastException =>
+        case _: ClassCastException =>
           val raw = u.showRaw(sym.rawInfo)
           val tastyRepr = u.typeOf[TastyRepr]
           throw new AssertionError(s"$sym is already completed. Expected $tastyRepr, is $raw.")
@@ -117,13 +119,22 @@ trait SymbolOps { self: TastyUniverse =>
     def safeOwner: Symbol = if (sym.owner eq sym) sym else sym.owner
   }
 
+  /** Is this symbol annotated with `scala.annotation.experimental`? */
+  def symIsExperimental(sym: Symbol) = sym.hasAnnotation(defn.ExperimentalAnnotationClass)
+
   /** if isConstructor, make sure it has one non-implicit parameter list */
-  def normalizeIfConstructor(termParamss: List[List[Symbol]], isConstructor: Boolean): List[List[Symbol]] =
-    if (isConstructor &&
-      (termParamss.isEmpty || termParamss.head.nonEmpty && termParamss.head.head.isImplicit))
-      Nil :: termParamss
+  def normalizeIfConstructor(@unused owner: Symbol, termParamss: List[List[Symbol]], paramClauses: List[List[NoCycle]], isConstructor: Boolean): List[List[Symbol]] =
+    if (!isConstructor) termParamss
     else
-      termParamss
+      paramClauses match {
+        case (vparam :: _) :: _ if vparam.tflags.is(Implicit, butNot=Given) => Nil :: termParamss
+        case _ =>
+          if (paramClauses.forall(paramClause => paramClause.nonEmpty && paramClause.head.tflags.is(Given))) {
+            termParamss :+ Nil
+          } else {
+            termParamss
+          }
+      }
 
   private[bridge] def lookupSymbol(space: Type, tname: TastyName)(implicit ctx: Context): Symbol = {
     deepComplete(space)
@@ -155,6 +166,21 @@ trait SymbolOps { self: TastyUniverse =>
       }
     }
     if (isSymbol(member) && hasType(member)) member
+    else if (ctx.isJava && space.termSymbol.isModule && !space.termSymbol.hasPackageFlag) {
+      // TODO [tasty]: remove this workaround for https://github.com/scala/scala3/issues/19619
+      //   Use heuristic that we are accidentally looking in the static scope for some class/object,
+      //   when really we should be looking in the instance scope. In this case, we should be always looking for
+      //   the class and not the object, so we convert to type name and look in the companion.
+      //
+      //   we have the added bonus that we are looking for an inner class defined in the same TASTy file,
+      //   so there should be no cross-file issues.
+      val space0 = space.typeSymbol.companionClass.typeOfThis
+      val tname0 = tname.toTypeName
+
+      val secondTry = lookupSymbol(space0, tname0)
+      if (secondTry.isClass) secondTry // avoid type parameters
+      else errorMissing(space0, tname0)
+    }
     else errorMissing(space, tname)
   }
 
@@ -165,14 +191,19 @@ trait SymbolOps { self: TastyUniverse =>
   private def errorMissing[T](space: Type, tname: TastyName)(implicit ctx: Context) = {
     val kind = if (tname.isTypeName) "type" else "term"
     def typeToString(tpe: Type) = {
+      def isPath(pre: Type) =
+        pre.isInstanceOf[u.SingletonType] || pre.termSymbol.isModule || pre.typeSymbol.isModuleClass
       def inner(sb: StringBuilder, tpe: Type): StringBuilder = tpe match {
-        case u.ThisType(cls) => sb append cls.fullNameString
+        case u.ThisType(cls) =>
+          val isPackage = cls.hasPackageFlag
+          sb append cls.fullNameString append (if (isPackage) "" else ".this")
         case u.SingleType(pre, sym) =>
-          if ((pre eq u.NoPrefix) || (pre eq u.NoType)) sb append sym.nameString
-          else inner(sb, pre) append '.' append sym.nameString
+          if ((pre eq u.NoPrefix) || (pre eq u.NoType)) sb append sym.nameString append ".type"
+          else inner(sb, pre) append '.' append sym.nameString append ".type"
         case u.TypeRef(pre, sym, _) =>
+          val sep = if (isPath(pre)) "." else "#"
           if ((pre eq u.NoPrefix) || (pre eq u.NoType)) sb append sym.nameString
-          else inner(sb, pre) append '.' append sym.nameString
+          else inner(sb, pre) append sep append sym.nameString
         case tpe => sb append tpe
       }
       inner(new StringBuilder(), tpe).toString

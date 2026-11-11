@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -36,7 +36,7 @@ import util._
 trait Positions extends api.Positions { self: SymbolTable =>
   type Position = scala.reflect.internal.util.Position
   val NoPosition = scala.reflect.internal.util.NoPosition
-  implicit val PositionTag = ClassTag[Position](classOf[Position])
+  implicit val PositionTag: ClassTag[Position] = ClassTag[Position](classOf[Position])
 
   def useOffsetPositions: Boolean = true
 
@@ -44,25 +44,26 @@ trait Positions extends api.Positions { self: SymbolTable =>
    *  The point of the wrapping position is the point of the default position.
    *  If some of the trees are ranges, returns a range position enclosing all ranges
    *  Otherwise returns default position that is either focused or not.
+   *  If the default point falls outside the calculated range, widen the result to include it.
    */
   def wrappingPos(default: Position, trees: List[Tree]): Position = wrappingPos(default, trees, focus = true)
-  def wrappingPos(default: Position, trees: List[Tree], focus: Boolean): Position = {
-    if (useOffsetPositions) default else {
-      val accum = new WrappingPosAccumulator()
-      var rest = trees
-      while (rest ne Nil) {
-        val head = rest.head
-        rest = rest.tail
-        // TODO: a tree's range position should cover the positions of all trees it "includes"
-        // (inclusion mostly refers to subtrees, but also other attributes reached through the tree, such as its annotations/modifiers);
-        // concretely, a MemberDef's position should cover its annotations (scala/bug#11060)
-        // Workaround, which explicitly includes annotations of traversed trees, can be removed when TODO above is resolved:
-        head match { case md: MemberDef => rest = md.mods.annotations ::: rest  case _ => }
 
+  private def wrappingPos(default: Position, trees: List[Tree], focus: Boolean): Position = if (useOffsetPositions) default else {
+    // TODO: a tree's range position should cover the positions of all trees it "includes"
+    // (inclusion mostly refers to subtrees, but also other attributes reached through the tree, such as its annotations/modifiers);
+    // concretely, a MemberDef's position should cover its annotations (scala/bug#11060)
+    // Workaround, which explicitly includes annotations of traversed trees, can be removed when TODO above is resolved:
+    val accum = new WrappingPosAccumulator()
+    def loop(trees: List[Tree]): Position = trees match {
+      case head :: rest =>
         accum(head)
-      }
-      accum.result(default, focus)
+        head match {
+          case md: MemberDef => loop(md.mods.annotations ::: rest)
+          case _ => loop(rest)
+        }
+      case _ => accum.result(default, focus)
     }
+    loop(trees)
   }
   private final class WrappingPosAccumulator extends (Tree => Boolean) {
     private[this] var min: Int = _
@@ -72,11 +73,19 @@ trait Positions extends api.Positions { self: SymbolTable =>
       max = Int.MinValue
     }
     reset()
-    def result(default: Position, focus: Boolean): Position = {
-      if (min > max)
-        if (focus) default.focus else default //there are no ranges
-      else Position.range(default.source, min, default.pointOrElse(min), max)
-    }
+    def result(default: Position, focus: Boolean): Position =
+      if (min > max) // there are no ranges
+        if (focus) default.focus else default
+      else {
+        val point = default.pointOrElse(min)
+        if (point < min || point > max) {
+          val start = Math.min(min, point)
+          val end   = Math.max(max, point)
+          Position.range(default.source, start = start, point = point, end = end)
+        }
+        else
+          Position.range(default.source, start = min, point = point, end = max)
+      }
     override def apply(v1: Tree): Boolean = {
       val pos = v1.pos
       if (pos.isRange) {
@@ -88,8 +97,8 @@ trait Positions extends api.Positions { self: SymbolTable =>
   }
 
   /** A position that wraps the non-empty set of trees.
-   *  The point of the wrapping position is the point of the first trees' position.
-   *  If some of the trees are non-synthetic, returns a range position enclosing the non-synthetic trees
+   *  The point of the wrapping position is the point of the first tree's position.
+   *  If some of the trees are non-synthetic, returns a range position enclosing the non-synthetic trees.
    *  Otherwise returns a synthetic offset position to point.
    */
   def wrappingPos(trees: List[Tree]): Position = {
@@ -103,9 +112,8 @@ trait Positions extends api.Positions { self: SymbolTable =>
    *  shortening the range, assigning TransparentPositions
    *  to some of the nodes in `tree` or focusing on the position.
    */
-  def ensureNonOverlapping(tree: Tree, others: List[Tree]): Unit ={ ensureNonOverlapping(tree, others, focus = true) }
-  def ensureNonOverlapping(tree: Tree, others: List[Tree], focus: Boolean): Unit = {
-    if (useOffsetPositions) return
+  def ensureNonOverlapping(tree: Tree, others: List[Tree]): Unit = ensureNonOverlapping(tree, others, focus = true)
+  def ensureNonOverlapping(tree: Tree, others: List[Tree], focus: Boolean): Unit = if (!useOffsetPositions) {
 
     def isOverlapping(pos: Position) =
       pos.isRange && (others exists (pos overlaps _.pos))
@@ -125,53 +133,52 @@ trait Positions extends api.Positions { self: SymbolTable =>
     if (useOffsetPositions) Position.offset(source, point)
     else Position.range(source, start, point, end)
 
-
   abstract class ChildSolidDescendantsCollector extends Traverser {
     // don't traverse annotations
     override def traverseModifiers(mods: Modifiers): Unit = ()
 
     override def traverse(tree: Tree): Unit =
-      if (tree ne EmptyTree) {
+      if (tree ne EmptyTree)
         if (tree.pos.isTransparent) super.traverse(tree)
-        else {
-          traverseSolidChild(tree)
-        }
-      }
+        else traverseSolidChild(tree)
+
     def traverseSolidChild(t: Tree): Unit
+
     def apply(t: Tree): Unit = super.traverse(t)
   }
 
-  private[this] def reportTree(prefix: String, tree: Tree): Unit = {
-    val source = if (tree.pos.isDefined) tree.pos.source else ""
-    inform("== " + prefix + " tree [" + tree.id + "] of type " + tree.productPrefix + " at " + tree.pos.show + source)
-    inform("")
-    inform(treeStatus(tree))
-    inform("")
-  }
-
-  private[this] def positionError(topTree: Tree, msg: String)(body: => Unit): Unit = {
-    inform("======= Position error\n" + msg)
-    body
-    inform("\nWhile validating #" + topTree.id)
-    inform(treeStatus(topTree))
-    inform("\nChildren:")
-    topTree.children foreach (t => inform("  " + treeStatus(t, topTree)))
-    inform("=======")
-    throw new ValidateException(msg)
-  }
-
-  private[this] val posStartOrdering: Ordering[Tree] = new Ordering[Tree] {
+  private val posStartOrdering: Ordering[Tree] = new Ordering[Tree] {
     override def compare(x: Tree, y: Tree): Int = {
-      @inline def posOf(t: Tree): Int = {
+      def posOf(t: Tree): Int = {
         val pos = t.pos
         if (pos eq NoPosition) Int.MinValue else pos.start
       }
       Integer.compare(posOf(x), posOf(y))
     }
   }
+
   def validatePositions(tree: Tree): Unit = if (!useOffsetPositions) {
+    def reportTree(prefix: String, tree: Tree): Unit = {
+      val source = if (tree.pos.isDefined) tree.pos.source else ""
+      inform("== " + prefix + " tree [" + tree.id + "] of type " + tree.productPrefix + " at " + tree.pos.show + source)
+      inform("")
+      inform(treeStatus(tree))
+      inform("")
+    }
+
+    def positionError(topTree: Tree, msg: String)(body: => Unit): Unit = {
+      inform("======= Position error\n" + msg)
+      body
+      inform("\nWhile validating #" + topTree.id)
+      inform(treeStatus(topTree))
+      inform("\nChildren:")
+      topTree.children foreach (t => inform("  " + treeStatus(t, topTree)))
+      inform("=======")
+      throw new ValidateException(msg)
+    }
+
     object worker {
-      val trace = settings.Yposdebug && settings.verbose
+      val trace = settings.Yposdebug.value && settings.verbose.value
       val topTree = tree
 
       object solidChildrenCollector extends ChildSolidDescendantsCollector {
@@ -210,73 +217,70 @@ trait Positions extends api.Positions { self: SymbolTable =>
         }
       }
 
-      def loop(tree: Tree, encltree: Tree): Unit = {
-        if (!tree.isEmpty && tree.canHaveAttrs) {
-          val treePos = tree.pos
-          if (trace)
-            inform("[%10s] %s".format("validate", treeStatus(tree, encltree)))
+      def loop(tree: Tree, encltree: Tree): Unit = if (!tree.isEmpty && tree.canHaveAttrs) {
+        val treePos = tree.pos
+        if (trace)
+          inform(f"[${"validate"}%10s] ${treeStatus(tree, encltree)}")
 
-          if (!treePos.isDefined)
-            positionError(topTree, "Unpositioned tree #" + tree.id) {
-              inform("%15s %s".format("unpositioned", treeStatus(tree, encltree)))
-              inform("%15s %s".format("enclosing", treeStatus(encltree)))
-              encltree.children foreach (t => inform("%15s %s".format("sibling", treeStatus(t, encltree))))
+        if (!treePos.isDefined)
+          positionError(topTree, s"Unpositioned tree #${tree.id}") {
+            inform("%15s %s".format("unpositioned", treeStatus(tree, encltree)))
+            inform("%15s %s".format("enclosing", treeStatus(encltree)))
+            encltree.children foreach (t => inform("%15s %s".format("sibling", treeStatus(t, encltree))))
+          }
+
+        solidChildrenCollector(tree)
+        val numChildren = solidChildrenCollector.collectedSize
+
+        if (treePos.isRange) {
+          val enclPos = encltree.pos
+          if (!enclPos.isRange)
+            positionError(topTree, "Synthetic tree [" + encltree.id + "] contains nonsynthetic tree [" + tree.id + "]") {
+              reportTree("Enclosing", encltree)
+              reportTree("Enclosed", tree)
+            }
+          if (!enclPos.includes(treePos))
+            positionError(topTree, "Enclosing tree [" + encltree.id + "] does not include tree [" + tree.id + "]") {
+              reportTree("Enclosing", encltree)
+              reportTree("Enclosed", tree)
             }
 
-          solidChildrenCollector(tree)
-          val numChildren = solidChildrenCollector.collectedSize
-
-          if (treePos.isRange) {
-            val enclPos = encltree.pos
-            if (!enclPos.isRange)
-              positionError(topTree, "Synthetic tree [" + encltree.id + "] contains nonsynthetic tree [" + tree.id + "]") {
-                reportTree("Enclosing", encltree)
-                reportTree("Enclosed", tree)
-              }
-            if (!(enclPos includes treePos))
-              positionError(topTree, "Enclosing tree [" + encltree.id + "] does not include tree [" + tree.id + "]") {
-                reportTree("Enclosing", encltree)
-                reportTree("Enclosed", tree)
-              }
-
-            if (numChildren > 1) {
-              val childSolidDescendants = solidChildrenCollector.sortedArray
-              var t1 = childSolidDescendants(0)
-              var t1Pos = t1.pos
-              var i = 1
-              while (i < numChildren) {
-                val t2 = childSolidDescendants(i)
-                val t2Pos = t2.pos
-                if (t1Pos.overlaps(t2Pos)) {
-                  positionError(topTree, "Overlapping trees") {
-                    reportTree("Ancestor", tree)
-                    reportTree("First overlapping", t1)
-                    reportTree("Second overlapping", t2)
-                  }
+          if (numChildren > 1) {
+            val childSolidDescendants = solidChildrenCollector.sortedArray
+            var t1 = childSolidDescendants(0)
+            var t1Pos = t1.pos
+            var i = 1
+            while (i < numChildren) {
+              val t2 = childSolidDescendants(i)
+              val t2Pos = t2.pos
+              if (t1Pos.overlaps(t2Pos)) {
+                positionError(topTree, "Overlapping trees") {
+                  reportTree("Ancestor", tree)
+                  reportTree("First overlapping", t1)
+                  reportTree("Second overlapping", t2)
                 }
-                //why only for range
-                if (t2Pos.isRange) {
-                  t1 = t2
-                  t1Pos = t2Pos
-                }
-                i += 1
               }
+              if (t2Pos.isRange) { // only ranges overlap, so check ranges pairwise
+                t1 = t2
+                t1Pos = t2Pos
+              }
+              i += 1
             }
           }
-          if (numChildren > 0) {
-            if (numChildren == 1) {
-              val first = solidChildrenCollector.child(0)
-              solidChildrenCollector.clear()
-              loop(first, tree)
-            } else {
-              val snap = solidChildrenCollector.borrowArray
-              var i = 0
-              while (i < numChildren) {
-                loop(snap(i), tree)
-                i += 1
-              }
-              solidChildrenCollector.spareArray(snap)
+        }
+        if (numChildren > 0) {
+          if (numChildren == 1) {
+            val first = solidChildrenCollector.child(0)
+            solidChildrenCollector.clear()
+            loop(first, tree)
+          } else {
+            val snap = solidChildrenCollector.borrowArray
+            var i = 0
+            while (i < numChildren) {
+              loop(snap(i), tree)
+              i += 1
             }
+            solidChildrenCollector.spareArray(snap)
           }
         }
       }
@@ -305,7 +309,7 @@ trait Positions extends api.Positions { self: SymbolTable =>
     def set(pos: Position, parent: Tree): Unit = {
       wrappingPosAccumulator.reset()
       this.pos = pos
-      try parent.foreachChild(this)
+      try parent.foreachChild(apply)
       finally {
         this.pos = null
       }
@@ -313,7 +317,7 @@ trait Positions extends api.Positions { self: SymbolTable =>
     def apply(tree: Tree): Boolean = {
       wrappingPosAccumulator.reset()
       if (!tree.isEmpty && tree.canHaveAttrs && tree.pos == NoPosition) {
-        tree.foreachChild(this)
+        tree.foreachChild(apply)
         tree.foreachChild(wrappingPosAccumulator)
         val wrappingPos = wrappingPosAccumulator.result(pos, focus = true)
         tree setPos wrappingPos
@@ -396,23 +400,20 @@ trait Positions extends api.Positions { self: SymbolTable =>
   /** Position a tree.
    *  This means: Set position of a node and position all its unpositioned children.
    */
-  def atPos[T <: Tree](pos: Position)(tree: T): T = {
+  def atPos[T <: Tree](pos: Position)(tree: T): tree.type = {
     if (useOffsetPositions || !pos.isOpaqueRange) {
       posAssigner.pos = pos
       posAssigner.traverse(tree)
-      tree
     }
-    else {
-      if (!tree.isEmpty && tree.canHaveAttrs && tree.pos == NoPosition) {
-        tree.setPos(pos)
-        tree.onlyChild match {
-          case EmptyTree =>
-            setChildrenPos(pos, tree)
-          case only =>
-            atPos(pos)(only)
-        }
+    else if (!tree.isEmpty && tree.canHaveAttrs && tree.pos == NoPosition) {
+      tree.setPos(pos)
+      tree.onlyChild match {
+        case EmptyTree =>
+          setChildrenPos(pos, tree)
+        case only =>
+          atPos(pos)(only)
       }
-      tree
     }
+    tree
   }
 }

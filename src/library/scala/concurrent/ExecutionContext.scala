@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -89,7 +89,7 @@ trait ExecutionContext {
      *
      *  This method should no longer be overridden or called. It was
      *  originally expected that `prepare` would be called by
-     *  all libraries that consume ExecutionContexts, in order to
+     *  all libraries that consume `ExecutionContext`s, in order to
      *  capture thread local context. However, this usage has proven
      *  difficult to implement in practice and instead it is
      *  now better to avoid using `prepare` entirely.

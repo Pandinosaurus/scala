@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,15 +13,15 @@
 package scala.tools.nsc
 package typechecker
 
-import symtab.Flags._
 import scala.collection.mutable
 import scala.reflect.ClassTag
-import PartialFunction.{cond => when}
+import symtab.Flags._
+import PartialFunction.cond
 
 /**
  *  @author Lukas Rytz
  */
-trait NamesDefaults { self: Analyzer =>
+trait NamesDefaults { self: AbstractAnalyzer =>
 
   import global._
   import definitions._
@@ -55,20 +55,24 @@ trait NamesDefaults { self: Analyzer =>
     qual:       Option[Tree],
     targs:      List[Tree],
     vargss:     List[List[Tree]],
-    blockTyper: Typer
-  ) { }
+    blockTyper: Typer,
+    original:   Tree,
+  )
   object NamedApplyBlock {
     private[this] val tag = reflect.classTag[NamedApplyInfo]
+    def namedApplyInfo(t: Tree): Option[NamedApplyInfo] = t.attachments.get[NamedApplyInfo](tag)
     def unapply(b: Tree): Option[NamedApplyInfo] = b match {
-      case _: Block => b.attachments.get[NamedApplyInfo](tag)
+      case _: Block => namedApplyInfo(b)
       case _ => None
     }
+    def apply(stats: List[Tree], expr: Tree)(nai: NamedApplyInfo): Block =
+      Block(stats, expr.updateAttachment(nai)).updateAttachment(nai)
   }
 
   private def nameOfNamedArg(arg: Tree) = Some(arg) collect { case NamedArg(Ident(name), _) => name }
   def isNamedArg(arg: Tree) = arg match {
     case NamedArg(Ident(_), _) => true
-    case _                             => false
+    case _                     => false
   }
 
   /** @param pos maps indices from old to new */
@@ -81,7 +85,7 @@ trait NamesDefaults { self: Analyzer =>
   /** @param pos maps indices from new to old (!) */
   private def reorderArgsInv[T: ClassTag](args: List[T], pos: Int => Int): List[T] = {
     val argsArray = args.toArray
-    (argsArray.indices map (i => argsArray(pos(i)))).toList
+    argsArray.indices.map(i => argsArray(pos(i))).toList
   }
 
   /** returns `true` if every element is equal to its index */
@@ -184,11 +188,12 @@ trait NamesDefaults { self: Analyzer =>
 
       // never used for constructor calls, they always have a stable qualifier
       def blockWithQualifier(qual: Tree, selected: Name) = {
-        val sym = blockTyper.context.owner.newValue(freshTermName(nme.QUAL_PREFIX)(typer.fresh), newFlags = ARTIFACT) setInfo uncheckedBounds(qual.tpe) setPos (qual.pos.makeTransparent)
+        val sym = blockTyper.context.owner.newValue(freshTermName(nme.QUAL_PREFIX)(typer.fresh), newFlags = ARTIFACT)
+                  .setInfo(uncheckedBounds(qual.tpe))
+                  .setPos(qual.pos.makeTransparent)
         blockTyper.context.scope enter sym
         val vd = atPos(sym.pos)(ValDef(sym, qual) setType NoType)
-        // it stays in Vegas: scala/bug#5720, scala/bug#5727
-        qual.changeOwner(blockTyper.context.owner, sym)
+        qual.changeOwner(blockTyper.context.owner, sym) // scala/bug#5720, scala/bug#5727
 
         val newQual = atPos(qual.pos.focus)(blockTyper.typedQualifier(Ident(sym.name)))
         val baseFunTransformed = atPos(baseFun.pos.makeTransparent) {
@@ -196,24 +201,23 @@ trait NamesDefaults { self: Analyzer =>
           // assigning the correct method symbol, typedSelect will just assign the type. the reason
           // to still call 'typed' is to correctly infer singleton types, scala/bug#5259.
           val selectPos =
-            if(qual.pos.isRange && baseFun1.pos.isRange) qual.pos.union(baseFun1.pos).withStart(Math.min(qual.pos.end, baseFun1.pos.end))
+            if (qual.pos.isRange && baseFun1.pos.isRange)
+              if (qual.pos == baseFun1.pos) qual.pos
+              else baseFun1.pos.union(qual.pos).withStart(Math.min(qual.pos.end, baseFun1.pos.end)) // use basefun point; why isn't start always qual.pos.end
             else baseFun1.pos
           val f = blockTyper.typedOperator(Select(newQual, selected).setSymbol(baseFun1.symbol).setPos(selectPos))
           if (funTargs.isEmpty) f
           else TypeApply(f, funTargs).setType(baseFun.tpe)
         }
 
-        val b = Block(List(vd), baseFunTransformed)
-                  .setType(baseFunTransformed.tpe).setPos(baseFun.pos.makeTransparent)
-        b.updateAttachment(NamedApplyInfo(Some(newQual), defaultTargs, Nil, blockTyper))
-        b
+        NamedApplyBlock(List(vd), baseFunTransformed)(NamedApplyInfo(Some(newQual), defaultTargs, Nil, blockTyper, tree))
+          .setType(baseFunTransformed.tpe)
+          .setPos(baseFun.pos.makeTransparent)
       }
 
-      def blockWithoutQualifier(defaultQual: Option[Tree]) = {
-        val b = atPos(baseFun.pos)(Block(Nil, baseFun).setType(baseFun.tpe))
-        b.updateAttachment(NamedApplyInfo(defaultQual, defaultTargs, Nil, blockTyper))
-        b
-      }
+      def blockWithoutQualifier(defaultQual: Option[Tree]) =
+        atPos(baseFun.pos)(NamedApplyBlock(Nil, baseFun)(NamedApplyInfo(defaultQual, defaultTargs, Nil, blockTyper, tree)))
+          .setType(baseFun.tpe)
 
       def moduleQual(pos: Position, classType: Type) = {
         // prefix does 'normalize', which fixes #3384
@@ -339,50 +343,61 @@ trait NamesDefaults { self: Analyzer =>
 
     // begin transform
     tree match {
-      case NamedApplyBlock(info) => tree
+      case NamedApplyBlock(_) => tree
       // `fun` is typed. `namelessArgs` might be typed or not, if they are types are kept.
       case Apply(fun, namelessArgs) =>
         val transformedFun = transformNamedApplication(typer, mode, pt)(fun, x => x)
         if (transformedFun.isErroneous) setError(tree)
         else {
-          val NamedApplyBlock(NamedApplyInfo(qual, targs, vargss, blockTyper)) = transformedFun: @unchecked
+          val NamedApplyBlock(NamedApplyInfo(qual, targs, vargss, blockTyper, _)) = transformedFun: @unchecked
           val Block(stats, funOnly) = transformedFun: @unchecked
 
           // type the application without names; put the arguments in definition-site order
           val typedApp = doTypedApply(tree, funOnly, reorderArgs(namelessArgs, argPos), mode, pt)
           typedApp match {
-            case Apply(expr, typedArgs) if (typedApp :: typedArgs).exists(_.isErrorTyped) =>
+            case Apply(_, typedArgs) if (typedApp :: typedArgs).exists(_.isErrorTyped) =>
               setError(tree) // bail out with and erroneous Apply *or* erroneous arguments, see scala/bug#7238, scala/bug#7509
             case Apply(expr, typedArgs) =>
-              // Extract the typed arguments, restore the call-site evaluation order (using
-              // ValDef's in the block), change the arguments to these local values.
+              val isAnnot = mode.in(Mode.ANNOTmode) && {
+                val s = funOnly.symbol
+                s != null && s.isConstructor && s.owner.isNonBottomSubClass(AnnotationClass)
+              }
 
-              // typedArgs: definition-site order
-              val formals = formalTypes(expr.tpe.paramTypes, typedArgs.length, removeByName = false, removeRepeated = false)
-              // valDefs: call-site order
-              val valDefs = argValDefs(reorderArgsInv(typedArgs, argPos),
-                                       reorderArgsInv(formals, argPos),
-                                       blockTyper)
-              // refArgs: definition-site order again
-              val refArgs = map3(reorderArgs(valDefs, argPos), formals, typedArgs)((vDefOpt, tpe, origArg) => vDefOpt match {
-                case None => origArg
-                case Some(vDef) =>
-                  val ref = gen.mkAttributedRef(vDef.symbol)
-                  atPos(vDef.pos.focus) {
-                    // for by-name parameters, the local value is a nullary function returning the argument
-                    tpe.typeSymbol match {
-                      case ByNameParamClass   => Apply(ref, Nil)
-                      case RepeatedParamClass => Typed(ref, Ident(tpnme.WILDCARD_STAR))
-                      case _                  => ref
+              if (isAnnot) {
+                NamedApplyBlock(stats, typedApp)(NamedApplyInfo(qual, targs, vargss :+ typedArgs, blockTyper, tree))
+                  .setType(typedApp.tpe)
+                  .setPos(tree.pos.makeTransparent)
+              } else {
+                // Extract the typed arguments, restore the call-site evaluation order (using
+                // ValDef's in the block), change the arguments to these local values.
+
+                // typedArgs: definition-site order
+                val formals = formalTypes(expr.tpe.paramTypes, typedArgs.length, removeByName = false, removeRepeated = false)
+                // valDefs: call-site order
+                val valDefs = argValDefs(reorderArgsInv(typedArgs, argPos),
+                  reorderArgsInv(formals, argPos),
+                  blockTyper)
+                // refArgs: definition-site order again
+                val refArgs = map3(reorderArgs(valDefs, argPos), formals, typedArgs)((vDefOpt, tpe, origArg) => vDefOpt match {
+                  case None => origArg
+                  case Some(vDef) =>
+                    val ref = gen.mkAttributedRef(vDef.symbol)
+                    atPos(vDef.pos.focus) {
+                      // for by-name parameters, the local value is a nullary function returning the argument
+                      tpe.typeSymbol match {
+                        case ByNameParamClass => Apply(ref, Nil)
+                        case RepeatedParamClass => Typed(ref, Ident(tpnme.WILDCARD_STAR))
+                        case _ => origArg.attachments.get[UnnamedArg.type].foreach(ref.updateAttachment); ref
+                      }
                     }
-                  }
-              })
-              // cannot call blockTyper.typedBlock here, because the method expr might be partially applied only
-              val res = blockTyper.doTypedApply(tree, expr, refArgs, mode, pt)
-              res.setPos(res.pos.makeTransparent)
-              val block = Block(stats ::: valDefs.flatten, res).setType(res.tpe).setPos(tree.pos.makeTransparent)
-              block.updateAttachment(NamedApplyInfo(qual, targs, vargss :+ refArgs, blockTyper))
-              block
+                })
+                // cannot call blockTyper.typedBlock here, because the method expr might be partially applied only
+                val res = blockTyper.doTypedApply(tree, expr, refArgs, mode, pt)
+                res.setPos(res.pos.makeTransparent)
+                NamedApplyBlock(stats ::: valDefs.flatten, res)(NamedApplyInfo(qual, targs, vargss :+ refArgs, blockTyper, tree))
+                  .setType(res.tpe)
+                  .setPos(tree.pos.makeTransparent)
+              }
             case _ => tree
           }
         }
@@ -405,7 +420,7 @@ trait NamesDefaults { self: Analyzer =>
    */
   def missingParams[T](args: List[T], params: List[Symbol], argName: T => Option[Name]): (List[Symbol], Boolean) = {
     // The argument list contains first a mix of positional args and named args that are on the
-    // right parameter position, and then a number or named args on different positions.
+    // right parameter position, and then a number of named args on different positions.
 
     // collect all named arguments whose position does not match the parameter they define
     val namedArgsOnChangedPosition = args.zip(params) dropWhile {
@@ -413,9 +428,8 @@ trait NamesDefaults { self: Analyzer =>
         val n = argName(arg)
         // drop the argument if
         //  - it's not named, or
-        //  - it's named, but defines the parameter on its current position, or
-        //  - it's named, but none of the parameter names matches (treated as a positional argument, an assignment expression)
-        n.isEmpty || n.get == param.name || params.forall(_.name != n.get)
+        //  - it's named, but defines the parameter on its current position
+        n.isEmpty || n.get == param.name
     } map (_._1)
 
     val paramsWithoutPositionalArg = params.drop(args.length - namedArgsOnChangedPosition.length)
@@ -433,6 +447,8 @@ trait NamesDefaults { self: Analyzer =>
    * Extend the argument list `givenArgs` with default arguments. Defaults are added
    * as named arguments calling the corresponding default getter.
    *
+   * Returns the extended arg list and missing parameters if any.
+   *
    * Example: given
    *   def foo(x: Int = 2, y: String = "def")
    *   foo(y = "lt")
@@ -440,32 +456,43 @@ trait NamesDefaults { self: Analyzer =>
    */
   def addDefaults(givenArgs: List[Tree], qual: Option[Tree], targs: List[Tree],
                   previousArgss: List[List[Tree]], params: List[Symbol],
-                  pos: scala.reflect.internal.util.Position, context: Context): (List[Tree], List[Symbol]) = {
+                  pos: scala.reflect.internal.util.Position, context: Context, mode : Mode): (List[Tree], List[Symbol]) = {
     if (givenArgs.length < params.length) {
       val (missing, positional) = missingParams(givenArgs, params, nameOfNamedArg)
-      if (missing forall (_.hasDefault)) {
-        val defaultArgs = missing flatMap (p => {
-          val defGetter = defaultGetter(p, context)
-          // TODO #3649 can create spurious errors when companion object is gone (because it becomes unlinked from scope)
-          if (defGetter == NoSymbol) None // prevent crash in erroneous trees, #3649
-          else {
-            var default1: Tree = qual match {
-              case Some(q) => gen.mkAttributedSelect(q.duplicate, defGetter)
-              case None    => gen.mkAttributedRef(defGetter)
+      if (missing.forall(_.hasDefault)) {
+        val defaultArgs = missing flatMap { p =>
+          val annDefault =
+            if (mode.in(Mode.ANNOTmode) && p.owner.isConstructor && p.enclClass.isNonBottomSubClass(AnnotationClass) && !p.enclClass.isNonBottomSubClass(ConstantAnnotationClass))
+              p.getAnnotation(DefaultArgAttr).flatMap(_.args.headOption).map(dflt => atPos(pos) {
+                // The `arg.tpe` is tagged with the `@defaultArg` annotation, see AnnotationInfo.argIsDefault
+                val arg = dflt.duplicate.setType(dflt.tpe.withAnnotation(AnnotationInfo(DefaultArgAttr.tpe, Nil, Nil)))
+                if (positional) arg
+                else NamedArg(Ident(p.name), arg)
+              })
+            else None
+          annDefault orElse {
+            val defGetter = defaultGetter(p, context)
+            // TODO #3649 can create spurious errors when companion object is gone (because it becomes unlinked from scope)
+            if (defGetter == NoSymbol) None // prevent crash in erroneous trees, #3649
+            else {
+              var default1: Tree = qual match {
+                case Some(q) => gen.mkAttributedSelect(q.duplicate, defGetter)
+                case None => gen.mkAttributedRef(defGetter)
 
+              }
+              default1 = if (targs.isEmpty) default1
+              else TypeApply(default1, targs.map(_.duplicate))
+              val default2 = previousArgss.foldLeft(default1)((tree, args) =>
+                Apply(tree, args.map(_.duplicate)))
+              Some(atPos(pos) {
+                if (positional) default2
+                else NamedArg(Ident(p.name), default2)
+              })
             }
-            default1 = if (targs.isEmpty) default1
-                       else TypeApply(default1, targs.map(_.duplicate))
-            val default2 = previousArgss.foldLeft(default1)((tree, args) =>
-              Apply(tree, args.map(_.duplicate)))
-            Some(atPos(pos) {
-              if (positional) default2
-              else NamedArg(Ident(p.name), default2)
-            })
           }
-        })
+        }
         (givenArgs ::: defaultArgs, Nil)
-      } else (givenArgs, missing filterNot (_.hasDefault))
+      } else (givenArgs, missing.filterNot(_.hasDefault))
     } else (givenArgs, Nil)
   }
 
@@ -523,11 +550,11 @@ trait NamesDefaults { self: Analyzer =>
    *  Verifies that names are not specified twice, and positional args don't appear after named ones.
    */
   def removeNames(typer: Typer)(args: List[Tree], params: List[Symbol]): (List[Tree], Array[Int]) = {
-    implicit val context0 = typer.context
+    implicit val context0: Context = typer.context
     def matchesName(param: Symbol, name: Name, argIndex: Int) = {
       def warn(msg: String, since: String) = context0.deprecationWarning(args(argIndex).pos, param, msg, since)
       def checkDeprecation(anonOK: Boolean) =
-        when (param.deprecatedParamName) {
+        cond(param.deprecatedParamName) {
           case Some(`name`)      => true
           case Some(nme.NO_NAME) => anonOK
         }
@@ -535,11 +562,11 @@ trait NamesDefaults { self: Analyzer =>
       def since   = if (version.isEmpty) version else s" (since $version)"
       def checkName = {
         val res = param.name == name
-        if (res && checkDeprecation(true)) warn(s"naming parameter $name is deprecated$since.", version)
+        if (res && checkDeprecation(anonOK = true)) warn(s"naming parameter $name is deprecated$since.", version)
         res
       }
       def checkAltName = {
-        val res = checkDeprecation(false)
+        val res = checkDeprecation(anonOK = false)
         if (res) warn(s"the parameter name $name is deprecated$since: use ${param.name} instead", version)
         res
       }
@@ -551,10 +578,9 @@ trait NamesDefaults { self: Analyzer =>
       var positionalAllowed = true
       def stripNamedArg(arg: NamedArg, argIndex: Int): Tree = {
         val NamedArg(Ident(name), rhs) = arg: @unchecked
-        params indexWhere (p => matchesName(p, name, argIndex)) match {
+        params.indexWhere(p => matchesName(p, name, argIndex)) match {
           case -1 =>
-            val warnVariableInScope = !currentRun.isScala3 && context0.lookupSymbol(name, _.isVariable).isSuccess
-            UnknownParameterNameNamesDefaultError(arg, name, warnVariableInScope)
+            UnknownParameterNameNamesDefaultError(arg, name, warnVariableInScope = context0.lookupSymbol(name, _.isVariable).isSuccess)
           case paramPos if argPos contains paramPos =>
             val existingArgIndex = argPos.indexWhere(_ == paramPos)
             val otherName = Some(args(paramPos)) collect {
@@ -573,12 +599,10 @@ trait NamesDefaults { self: Analyzer =>
           val t = stripNamedArg(arg, argIndex)
           if (!t.isErroneous && argPos(argIndex) < 0) argPos(argIndex) = argIndex
           t
-        case (arg, argIndex) =>
-          if (positionalAllowed) {
-            argPos(argIndex) = argIndex
-            arg
-          } else
-            PositionalAfterNamedNamesDefaultError(arg)
+        case (arg, argIndex) if positionalAllowed =>
+          argPos(argIndex) = argIndex
+          arg
+        case (arg, _) => PositionalAfterNamedNamesDefaultError(arg)
       }
     }
     (namelessArgs, argPos)

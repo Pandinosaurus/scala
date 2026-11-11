@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -25,7 +25,7 @@ private[reflect] class Settings extends MutableSettings {
 
   trait Setting extends SettingValue { }
 
-  class BooleanSetting(x: Boolean) extends Setting {
+  class BooleanSetting(@deprecatedName x: Boolean) extends Setting {
     type T = Boolean
     protected var v: Boolean = x
     override def value: Boolean = v
@@ -58,7 +58,7 @@ private[reflect] class Settings extends MutableSettings {
   val uniqid            = new BooleanSetting(false)
   val verbose           = new BooleanSetting(false)
 
-  val YhotStatisticsEnabled = new BooleanSetting(false) { override def postSetHook() = if (v && YstatisticsEnabled) StatisticsStatics.enableHotStatsAndDeoptimize()  }
+  val YhotStatisticsEnabled = new BooleanSetting(false) { override def postSetHook() = if (v && YstatisticsEnabled.value) StatisticsStatics.enableHotStatsAndDeoptimize()  }
   val YstatisticsEnabled    = new BooleanSetting(false) { override def postSetHook() = if (v)                       StatisticsStatics.enableColdStatsAndDeoptimize() }
 
   val Yrecursion = new IntSetting(0)

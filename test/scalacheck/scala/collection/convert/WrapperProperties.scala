@@ -1,7 +1,7 @@
 
 package scala.collection.convert
 
-import org.scalacheck.{Properties, Test}
+import org.scalacheck.Properties
 import org.scalacheck.Prop._
 
 import scala.collection.immutable
@@ -14,7 +14,7 @@ object WrapperProperties extends Properties("Wrappers") {
     val actual: collection.Set[Int] = {
       val jset = new java.util.HashSet[Int]()
       hs.foreach(jset.add)
-      JavaCollectionWrappers.JSetWrapper(jset)
+      new JavaCollectionWrappers.JSetWrapper(jset)
     }.filterInPlace(p)
     actual ?= expected
   }

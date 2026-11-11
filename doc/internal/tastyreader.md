@@ -1,6 +1,8 @@
 # TASTy Reader For Scala 2
 
-The [**TASTy Reader For Scala 2**](https://scala.epfl.ch/projects.html#tastyScala2), included in the Scala 2.x Compiler will enable usage in Scala `2.13.x` of dependencies that have been compiled with `dotc`, the reference compiler of Scala `3.0`.
+The [**TASTy Reader For Scala 2**](https://scala.epfl.ch/projects.html#tastyScala2), included in the Scala 2.13 compiler, enables using dependencies that have been compiled with Scala 3 in Scala 2.13.
+
+Scala 3.7 (TASTy version 28.7) is the final Scala 3 version supported by the TASTy reader; support for newer versions will not be added (see [scala/bug#13152](https://github.com/scala/bug/issues/13152)).
 
 TASTy is an intermediate representation of a Scala program after type checking and term elaboration, such as inference of implicit parameters. When compiling code with Scala 3, a single TASTy document is associated with each pair of root class and companion object. Within a TASTy document, the public API of those roots and any inner classes can be read, in a similar way to pickles in the Scala 2.x series.
 
@@ -99,7 +101,7 @@ In the above, relative paths will be calculated from the working directory of `t
 
 Because these commands are run from sbt, incremental changes can be made to the code for the TASTy reader and then step `2` can be immediately re-run to observe new behaviour of the compiler.
 
-In the output of the above step `2`, you will see the the following snippet, showing progress in traversing TASTy and understanding the definition of `trait Dull`:
+In the output of the above step `2`, you will see the following snippet, showing progress in traversing TASTy and understanding the definition of `trait Dull`:
 ```scala
 #[trait Dull]: Addr(4) completing Symbol(trait Dull, #6286):
 #[trait Dull]: Addr(7) No symbol found at current address, ensuring one exists:

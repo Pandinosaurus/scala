@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -58,7 +58,7 @@ trait Manifest[T] extends ClassManifest[T] with Equals {
     case _                => false
   }
   /** Note: testing for erasure here is important, as it is many times
-   *  faster than <:< and rules out most comparisons.
+   *  faster than `<:<` and rules out most comparisons.
    */
   override def equals(that: Any): Boolean = that match {
     case m: Manifest[_] => (m canEqual this) && (this.runtimeClass == m.runtimeClass) && (this <:< m) && (m <:< this)
@@ -99,26 +99,26 @@ object Manifest {
   val Null: Manifest[scala.Null] = ManifestFactory.Null
   val Nothing: Manifest[scala.Nothing] = ManifestFactory.Nothing
 
-  /** Manifest for the singleton type `value.type`. */
+  /** `Manifest` for the singleton type `value.type`. */
   def singleType[T <: AnyRef](value: AnyRef): Manifest[T] =
     ManifestFactory.singleType[T](value)
 
-  /** Manifest for the class type `clazz[args]`, where `clazz` is
+  /** `Manifest` for the class type `clazz[args]`, where `clazz` is
     * a top-level or static class.
     * @note This no-prefix, no-arguments case is separate because we
-    *       it's called from ScalaRunTime.boxArray itself. If we
+    *       it's called from `ScalaRunTime.boxArray` itself. If we
     *       pass varargs as arrays into this, we get an infinitely recursive call
-    *       to boxArray. (Besides, having a separate case is more efficient)
+    *       to `boxArray`. (Besides, having a separate case is more efficient)
     */
   def classType[T](clazz: Predef.Class[_]): Manifest[T] =
     ManifestFactory.classType[T](clazz)
 
-  /** Manifest for the class type `clazz`, where `clazz` is
+  /** `Manifest` for the class type `clazz`, where `clazz` is
     * a top-level or static class and args are its type arguments. */
   def classType[T](clazz: Predef.Class[T], arg1: Manifest[_], args: Manifest[_]*): Manifest[T] =
     ManifestFactory.classType[T](clazz, arg1, args: _*)
 
-  /** Manifest for the class type `clazz[args]`, where `clazz` is
+  /** `Manifest` for the class type `clazz[args]`, where `clazz` is
     * a class with non-package prefix type `prefix` and type arguments `args`.
     */
   def classType[T](prefix: Manifest[_], clazz: Predef.Class[_], args: Manifest[_]*): Manifest[T] =
@@ -127,17 +127,17 @@ object Manifest {
   def arrayType[T](arg: Manifest[_]): Manifest[Array[T]] =
     ManifestFactory.arrayType[T](arg)
 
-  /** Manifest for the abstract type `prefix # name`. `upperBound` is not
+  /** `Manifest` for the abstract type `prefix # name`. `upperBound` is not
     * strictly necessary as it could be obtained by reflection. It was
     * added so that erasure can be calculated without reflection. */
   def abstractType[T](prefix: Manifest[_], name: String, upperBound: Predef.Class[_], args: Manifest[_]*): Manifest[T] =
     ManifestFactory.abstractType[T](prefix, name, upperBound, args: _*)
 
-  /** Manifest for the unknown type `_ >: L <: U` in an existential. */
+  /** `Manifest` for the unknown type `_ >: L <: U` in an existential. */
   def wildcardType[T](lowerBound: Manifest[_], upperBound: Manifest[_]): Manifest[T] =
     ManifestFactory.wildcardType[T](lowerBound, upperBound)
 
-  /** Manifest for the intersection type `parents_0 with ... with parents_n`. */
+  /** `Manifest` for the intersection type `parents_0 with ... with parents_n`. */
   def intersectionType[T](parents: Manifest[_]*): Manifest[T] =
     ManifestFactory.intersectionType[T](parents: _*)
 
@@ -173,7 +173,7 @@ object ManifestFactory {
 
   @SerialVersionUID(1L)
   final private[reflect] class ByteManifest extends AnyValManifest[scala.Byte]("Byte") {
-    def runtimeClass = java.lang.Byte.TYPE
+    def runtimeClass: Class[java.lang.Byte] = java.lang.Byte.TYPE
     @inline override def newArray(len: Int): Array[Byte] = new Array[Byte](len)
     override def newWrappedArray(len: Int): ArraySeq[Byte] = new ArraySeq.ofByte(new Array[Byte](len))
     override def newArrayBuilder(): ArrayBuilder[Byte] = new ArrayBuilder.ofByte()
@@ -189,7 +189,7 @@ object ManifestFactory {
 
   @SerialVersionUID(1L)
   final private[reflect] class ShortManifest extends AnyValManifest[scala.Short]("Short") {
-    def runtimeClass = java.lang.Short.TYPE
+    def runtimeClass: Class[java.lang.Short] = java.lang.Short.TYPE
     @inline override def newArray(len: Int): Array[Short] = new Array[Short](len)
     override def newWrappedArray(len: Int): ArraySeq[Short] = new ArraySeq.ofShort(new Array[Short](len))
     override def newArrayBuilder(): ArrayBuilder[Short] = new ArrayBuilder.ofShort()
@@ -205,7 +205,7 @@ object ManifestFactory {
 
   @SerialVersionUID(1L)
   final private[reflect] class CharManifest extends AnyValManifest[scala.Char]("Char") {
-    def runtimeClass = java.lang.Character.TYPE
+    def runtimeClass: Class[java.lang.Character] = java.lang.Character.TYPE
     @inline override def newArray(len: Int): Array[Char] = new Array[Char](len)
     override def newWrappedArray(len: Int): ArraySeq[Char] = new ArraySeq.ofChar(new Array[Char](len))
     override def newArrayBuilder(): ArrayBuilder[Char] = new ArrayBuilder.ofChar()
@@ -221,7 +221,7 @@ object ManifestFactory {
 
   @SerialVersionUID(1L)
   final private[reflect] class IntManifest extends AnyValManifest[scala.Int]("Int") {
-    def runtimeClass = java.lang.Integer.TYPE
+    def runtimeClass: Class[java.lang.Integer] = java.lang.Integer.TYPE
     @inline override def newArray(len: Int): Array[Int] = new Array[Int](len)
     override def newWrappedArray(len: Int): ArraySeq[Int] = new ArraySeq.ofInt(new Array[Int](len))
     override def newArrayBuilder(): ArrayBuilder[Int] = new ArrayBuilder.ofInt()
@@ -237,7 +237,7 @@ object ManifestFactory {
 
   @SerialVersionUID(1L)
   final private[reflect] class LongManifest extends AnyValManifest[scala.Long]("Long") {
-    def runtimeClass = java.lang.Long.TYPE
+    def runtimeClass: Class[java.lang.Long] = java.lang.Long.TYPE
     @inline override def newArray(len: Int): Array[Long] = new Array[Long](len)
     override def newWrappedArray(len: Int): ArraySeq[Long] = new ArraySeq.ofLong(new Array[Long](len))
     override def newArrayBuilder(): ArrayBuilder[Long] = new ArrayBuilder.ofLong()
@@ -253,7 +253,7 @@ object ManifestFactory {
 
   @SerialVersionUID(1L)
   final private[reflect] class FloatManifest extends AnyValManifest[scala.Float]("Float") {
-    def runtimeClass = java.lang.Float.TYPE
+    def runtimeClass: Class[java.lang.Float] = java.lang.Float.TYPE
     @inline override def newArray(len: Int): Array[Float] = new Array[Float](len)
     override def newWrappedArray(len: Int): ArraySeq[Float] = new ArraySeq.ofFloat(new Array[Float](len))
     override def newArrayBuilder(): ArrayBuilder[Float] = new ArrayBuilder.ofFloat()
@@ -269,7 +269,7 @@ object ManifestFactory {
 
   @SerialVersionUID(1L)
   final private[reflect] class DoubleManifest extends AnyValManifest[scala.Double]("Double") {
-    def runtimeClass = java.lang.Double.TYPE
+    def runtimeClass: Class[java.lang.Double] = java.lang.Double.TYPE
     @inline override def newArray(len: Int): Array[Double] = new Array[Double](len)
     override def newWrappedArray(len: Int): ArraySeq[Double] = new ArraySeq.ofDouble(new Array[Double](len))
     override def newArrayBuilder(): ArrayBuilder[Double] = new ArrayBuilder.ofDouble()
@@ -286,7 +286,7 @@ object ManifestFactory {
 
   @SerialVersionUID(1L)
   final private[reflect] class BooleanManifest extends AnyValManifest[scala.Boolean]("Boolean") {
-    def runtimeClass = java.lang.Boolean.TYPE
+    def runtimeClass: Class[java.lang.Boolean] = java.lang.Boolean.TYPE
     @inline override def newArray(len: Int): Array[Boolean] = new Array[Boolean](len)
     override def newWrappedArray(len: Int): ArraySeq[Boolean] = new ArraySeq.ofBoolean(new Array[Boolean](len))
     override def newArrayBuilder(): ArrayBuilder[Boolean] = new ArrayBuilder.ofBoolean()
@@ -302,7 +302,7 @@ object ManifestFactory {
 
   @SerialVersionUID(1L)
   final private[reflect] class UnitManifest extends AnyValManifest[scala.Unit]("Unit") {
-    def runtimeClass = java.lang.Void.TYPE
+    def runtimeClass: Class[java.lang.Void] = java.lang.Void.TYPE
     @inline override def newArray(len: Int): Array[Unit] = new Array[Unit](len)
     override def newWrappedArray(len: Int): ArraySeq[Unit] = new ArraySeq.ofUnit(new Array[Unit](len))
     override def newArrayBuilder(): ArrayBuilder[Unit] = new ArrayBuilder.ofUnit()
@@ -368,30 +368,30 @@ object ManifestFactory {
 
   @SerialVersionUID(1L)
   final private class SingletonTypeManifest[T <: AnyRef](value: AnyRef) extends Manifest[T] {
-    lazy val runtimeClass = value.getClass
+    lazy val runtimeClass: Class[_ <: AnyRef] = value.getClass
     override lazy val toString = value.toString + ".type"
   }
 
-  /** Manifest for the singleton type `value.type`. */
+  /** `Manifest` for the singleton type `value.type`. */
   def singleType[T <: AnyRef](value: AnyRef): Manifest[T] =
     new SingletonTypeManifest[T](value)
 
-  /** Manifest for the class type `clazz[args]`, where `clazz` is
+  /** `Manifest` for the class type `clazz[args]`, where `clazz` is
     * a top-level or static class.
     * @note This no-prefix, no-arguments case is separate because we
-    *       it's called from ScalaRunTime.boxArray itself. If we
+    *       it's called from `ScalaRunTime.boxArray` itself. If we
     *       pass varargs as arrays into this, we get an infinitely recursive call
-    *       to boxArray. (Besides, having a separate case is more efficient)
+    *       to `boxArray`. (Besides, having a separate case is more efficient)
     */
   def classType[T](clazz: Predef.Class[_]): Manifest[T] =
     new ClassTypeManifest[T](None, clazz, Nil)
 
-  /** Manifest for the class type `clazz`, where `clazz` is
+  /** `Manifest` for the class type `clazz`, where `clazz` is
     * a top-level or static class and args are its type arguments. */
   def classType[T](clazz: Predef.Class[T], arg1: Manifest[_], args: Manifest[_]*): Manifest[T] =
     new ClassTypeManifest[T](None, clazz, arg1 :: args.toList)
 
-  /** Manifest for the class type `clazz[args]`, where `clazz` is
+  /** `Manifest` for the class type `clazz[args]`, where `clazz` is
     * a class with non-package prefix type `prefix` and type arguments `args`.
     */
   def classType[T](prefix: Manifest[_], clazz: Predef.Class[_], args: Manifest[_]*): Manifest[T] =
@@ -405,7 +405,7 @@ object ManifestFactory {
     override val hashCode = System.identityHashCode(this)
   }
 
-  /** Manifest for the class type `clazz[args]`, where `clazz` is
+  /** `Manifest` for the class type `clazz[args]`, where `clazz` is
     * a top-level or static class. */
   @SerialVersionUID(1L)
   private class ClassTypeManifest[T](prefix: Option[Manifest[_]],
@@ -427,7 +427,7 @@ object ManifestFactory {
     override def toString = prefix.toString+"#"+name+argString
   }
 
-  /** Manifest for the abstract type `prefix # name`. `upperBound` is not
+  /** `Manifest` for the abstract type `prefix # name`. `upperBound` is not
     * strictly necessary as it could be obtained by reflection. It was
     * added so that erasure can be calculated without reflection. */
   def abstractType[T](prefix: Manifest[_], name: String, upperBound: Predef.Class[_], args: Manifest[_]*): Manifest[T] =
@@ -442,7 +442,7 @@ object ManifestFactory {
         (if (upperBound eq Nothing) "" else " <: "+upperBound)
   }
 
-  /** Manifest for the unknown type `_ >: L <: U` in an existential.
+  /** `Manifest` for the unknown type `_ >: L <: U` in an existential.
     */
   def wildcardType[T](lowerBound: Manifest[_], upperBound: Manifest[_]): Manifest[T] =
     new WildcardManifest[T](lowerBound, upperBound)
@@ -455,7 +455,7 @@ object ManifestFactory {
     override def toString = parents.mkString(" with ")
   }
 
-  /** Manifest for the intersection type `parents_0 with ... with parents_n`. */
+  /** `Manifest` for the intersection type `parents_0 with ... with parents_n`. */
   def intersectionType[T](parents: Manifest[_]*): Manifest[T] =
     new IntersectionTypeManifest[T](parents.toArray)
 }

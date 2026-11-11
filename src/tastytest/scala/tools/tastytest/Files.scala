@@ -1,3 +1,15 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc. dba Akka
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala.tools.tastytest
 
 import scala.io.{ Source, BufferedSource }
@@ -15,6 +27,19 @@ object Files {
   def tempDir(dir: String): Try[String] = Try(JFiles.createTempDirectory(dir)).map(_.toString)
 
   def currentDir: String = FileSystems.getDefault.getPath(".").toString
+
+  def relativize(from: String, paths: String*): Try[Seq[String]] = Try {
+    val root = JPaths.get(from).toAbsolutePath
+    paths.map(p => root.relativize(JPaths.get(p).toAbsolutePath).toString())
+  }
+
+  def copyAll(relPaths: Seq[String], from: String, to: String): Try[Unit] = Try {
+    relPaths.foreach { p =>
+      // create all directories in the path if they don't exist
+      JFiles.createDirectories(JPaths.get(to/p).getParent)
+      JFiles.copy(JPaths.get(from/p), JPaths.get(to/p))
+    }
+  }
 
   def dir(dir: String): Try[String] = Try {
     val path = JPaths.get(dir)
@@ -46,15 +71,19 @@ object Files {
     }
   }
 
+  def allowByNames(names: Set[String])(elem: String): Boolean = {
+    val path = JPaths.get(elem)
+    val name = path.getFileName.toString
+    names.contains(name)
+  }
+
   def processLines[A](file: String)(op: ju.stream.Stream[String] => A): A = {
-    var stream: java.util.stream.Stream[String] = null
-    try {
-      stream = JFiles.lines(JPaths.get(file))
+    val stream: java.util.stream.Stream[String] = JFiles.lines(JPaths.get(file))
+    try
       op(stream)
-    }
-    finally if (stream != null) {
+    finally
       stream.close()
-    }
+
   }
 
   def use[T](resource: String)(op: jl.Iterable[String] => Try[T]): Try[T] = Try {

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,7 +14,8 @@
 //   scala -J-Dscala.process.debug
 // for process debugging output.
 //
-package scala.sys {
+package scala.sys
+package process
   /** This package handles the execution of external processes.  The contents of
     * this package can be divided in three groups, according to their
     * responsibilities:
@@ -204,7 +205,7 @@ package scala.sys {
     *   - `destroy()`: this will kill the external process and close the streams
     *   associated with it.
     */
-  package object process extends ProcessImplicits {
+  object `package` extends ProcessImplicits {
     /** The input stream of this process */
     def stdin  = java.lang.System.in
     /** The output stream of this process */
@@ -216,7 +217,6 @@ package scala.sys {
   //   if (isWin) Array("cmd.exe", "/C", _)
   //   else Array("sh", "-c", _)
 
-  package process {
     // These are in a nested object instead of at the package level
     // due to the issues described in tickets #3160 and #3836.
     private[process] object processInternal {
@@ -257,5 +257,3 @@ package scala.sys {
         Console.println("[process] " + (msgs mkString " "))
       }
     }
-  }
-}

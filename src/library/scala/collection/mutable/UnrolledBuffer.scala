@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,7 +14,7 @@ package scala.collection
 package mutable
 
 import scala.annotation.tailrec
-import scala.collection.generic.DefaultSerializable
+import scala.collection.generic.{CommonErrors, DefaultSerializable}
 import scala.reflect.ClassTag
 import scala.collection.immutable.Nil
 
@@ -89,7 +89,7 @@ sealed class UnrolledBuffer[T](implicit val tag: ClassTag[T])
   // def setLengthPolicy(nextLength: Int => Int): Unit = { myLengthPolicy = nextLength }
   private[collection] def calcNextLength(sz: Int) = sz // myLengthPolicy(sz)
 
-  def classTagCompanion = UnrolledBuffer
+  def classTagCompanion: UnrolledBuffer.type = UnrolledBuffer
 
   /** Concatenates the target unrolled buffer to this unrolled buffer.
     *
@@ -158,12 +158,17 @@ sealed class UnrolledBuffer[T](implicit val tag: ClassTag[T])
 
   def apply(idx: Int) =
     if (idx >= 0 && idx < sz) headptr(idx)
-    else throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${sz-1})")
+    else throw CommonErrors.indexOutOfBounds(index = idx, max = sz - 1)
 
   def update(idx: Int, newelem: T) =
     if (idx >= 0 && idx < sz) headptr(idx) = newelem
-    else throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${sz-1})")
+    else throw CommonErrors.indexOutOfBounds(index = idx, max = sz - 1)
 
+  /** Replaces the contents of this $coll with the mapped result.
+   *
+   *  @param f the mapping function
+   *  @return this $coll
+   */
   def mapInPlace(f: T => T): this.type = {
     headptr.mapInPlace(f)
     this
@@ -173,7 +178,7 @@ sealed class UnrolledBuffer[T](implicit val tag: ClassTag[T])
     if (idx >= 0 && idx < sz) {
       sz -= 1
       headptr.remove(idx, this)
-    } else throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${sz-1})")
+    } else throw CommonErrors.indexOutOfBounds(index = idx, max = sz - 1)
 
   @tailrec final def remove(idx: Int, count: Int): Unit =
     if (count > 0) {
@@ -193,7 +198,7 @@ sealed class UnrolledBuffer[T](implicit val tag: ClassTag[T])
   def insertAll(idx: Int, elems: IterableOnce[T]): Unit =
     if (idx >= 0 && idx <= sz) {
       sz += headptr.insertAll(idx, elems, this)
-    } else throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${sz-1})")
+    } else throw CommonErrors.indexOutOfBounds(index = idx, max = sz - 1)
 
   override def subtractOne(elem: T): this.type = {
     if (headptr.subtractOne(elem, this)) {
@@ -430,7 +435,7 @@ object UnrolledBuffer extends StrictOptimizedClassTagSeqFactory[UnrolledBuffer] 
     }
 
     override def toString: String =
-      array.take(size).mkString("Unrolled@%08x".format(System.identityHashCode(this)) + "[" + size + "/" + array.length + "](", ", ", ")") + " -> " + (if (next ne null) next.toString else "")
+      array.take(size).mkString(s"Unrolled@${System.identityHashCode(this).toHexString}[$size/${array.length}](", ", ", ")") + " -> " + (if (next ne null) next.toString else "")
   }
 }
 
@@ -438,5 +443,5 @@ object UnrolledBuffer extends StrictOptimizedClassTagSeqFactory[UnrolledBuffer] 
 // Todo -- revisit whether inheritance is the best way to achieve this functionality
 private[collection] class DoublingUnrolledBuffer[T](implicit t: ClassTag[T]) extends UnrolledBuffer[T]()(t) {
   override def calcNextLength(sz: Int) = if (sz < 10000) sz * 2 else sz
-  protected override def newUnrolled = new UnrolledBuffer.Unrolled[T](0, new Array[T](4), null, this)
+  override protected def newUnrolled = new UnrolledBuffer.Unrolled[T](0, new Array[T](4), null, this)
 }

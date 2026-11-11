@@ -20,9 +20,11 @@ import java.io.{File => JFile}
 import scala.collection.mutable.ListBuffer
 import scala.reflect.internal.util.{BatchSourceFile, Position}
 import scala.reflect.internal.{Reporter => InternalReporter}
-import scala.reflect.io.PlainFile
-import scala.tools.nsc.Reporting.{Version, WarningCategory}
+import scala.reflect.io.AbstractFile
 import scala.reflect.io.File
+import scala.reflect.io.PlainFile
+import scala.reflect.io.VirtualFile
+import scala.tools.nsc.Reporting.{Version, WarningCategory}
 import scala.tools.nsc.reporters.StoreReporter.Info
 import scala.tools.testkit.AssertUtil.fail
 import scala.tools.testkit.BytecodeTesting
@@ -43,8 +45,7 @@ class WConfTest extends BytecodeTesting {
     reports(code, extraWconf, lint).filter(_.severity == InternalReporter.INFO)
 
   def reports(code: String, extraWconf: String = "", lint: Boolean = false): List[Info] = {
-    // lint has a postSetHook to enable `deprecated`, which in turn adds to `Wconf`,
-    // but since we clear and initialize Wconf after enabling lint, that effect is cancelled.
+    global.settings.deprecation.reset()
     if (lint) {
       global.settings.warnUnused.clear()
       global.settings.lint.tryToSet(List("_"))
@@ -90,7 +91,7 @@ class WConfTest extends BytecodeTesting {
       |}
       |""".stripMargin
 
-  val l2 = (2, "Specify both message and version: @deprecated(\"message\", since = \"1.0\")")
+  val l2 = (2, "Specify both message and version: @deprecated(\"message\", since = \"MyLib 1.0\")")
   val l5a = (5, "method f in class A is deprecated")
   val l5b = (5, "method g in class A is deprecated")
   val l7 = (7, "reflective access of structural type member method f should be enabled")
@@ -142,14 +143,14 @@ class WConfTest extends BytecodeTesting {
   @Test
   def warnVerbose: Unit =
     check(reports(code, "any:wv"), List(
-      l5a.copy(_2 = "[deprecation @ A.invokeDeprecated | origin=A.f | version=] " + l5a._2),
-      l5b.copy(_2 = "[deprecation @ A.invokeDeprecated | origin=A.g | version=1.2.3] " + l5b._2),
-      l7.copy(_2 = "[feature-reflective-calls @ A.featureReflectiveCalls] " + l7._2),
-      l9.copy(_2 = "[other-pure-statement @ A.pureExpressionAsStatement] " + l9._2),
-      l11.copy(_2 = "[other @ A.fruitlessTypeTest] " + l11._2),
-      l13.copy(_2 = "[unchecked @ A.uncheckedTypeTest] " + l13._2),
-      l16.copy(_2 = "[unchecked @ A.Outer.UncheckedWarningSummarized.equals] " + l16._2),
-      l20.copy(_2 = "[optimizer @ A.optimizerWarning] " + l20._2),
+      l5a.copy(_2 = "\nApplicable -Wconf / @nowarn filters for this warning: msg=<part of the message>, cat=deprecation, site=A.invokeDeprecated, origin=A.f"),
+      l5b.copy(_2 = "\nApplicable -Wconf / @nowarn filters for this warning: msg=<part of the message>, cat=deprecation, site=A.invokeDeprecated, origin=A.g, version=1.2.3"),
+      l7.copy(_2 = "\nApplicable -Wconf / @nowarn filters for this warning: msg=<part of the message>, cat=feature-reflective-calls, site=A.featureReflectiveCalls"),
+      l9.copy(_2 = "\nApplicable -Wconf / @nowarn filters for this warning: msg=<part of the message>, cat=other-pure-statement, site=A.pureExpressionAsStatement"),
+      l11.copy(_2 = "\nApplicable -Wconf / @nowarn filters for this warning: msg=<part of the message>, cat=other, site=A.fruitlessTypeTest"),
+      l13.copy(_2 = "\nApplicable -Wconf / @nowarn filters for this warning: msg=<part of the message>, cat=unchecked, site=A.uncheckedTypeTest"),
+      l16.copy(_2 = "\nApplicable -Wconf / @nowarn filters for this warning: msg=<part of the message>, cat=unchecked, site=A.Outer.UncheckedWarningSummarized.equals"),
+      l20.copy(_2 = "\nApplicable -Wconf / @nowarn filters for this warning: msg=<part of the message>, cat=optimizer, site=A.optimizerWarning"),
       )
     )
 
@@ -215,8 +216,8 @@ class WConfTest extends BytecodeTesting {
   def lint(): Unit = {
     check(infos(code, "cat=lint:i"), Nil)
     check(infos(code, "cat=lint:i", lint = true), List(l2, l23))
-    check(reports(code, "any:s,cat=lint:ws", lint = true), Nil)
-    check(reports(code, "cat=lint:ws,any:s", lint = true), List((-1, "2 lint warnings")))
+    check(reports(code, "any:s,cat=lint:ws", lint = true), List((-1, "2 lint warnings")))
+    check(reports(code, "cat=lint:ws,any:s", lint = true), Nil)
     check(infos(code, "cat=lint-deprecation:i", lint = true), List(l2))
     check(infos(code, "cat=lint-adapted-args:i", lint = true), List(l23))
   }
@@ -233,7 +234,7 @@ class WConfTest extends BytecodeTesting {
 
   @Test
   def unusedSite(): Unit = {
-    check(infos(code, "cat=unused:iv", lint = true), (25, "[unused-locals @ A.unusedLocal.h] local val h in method unusedLocal is never used") :: Nil)
+    check(infos(code, "cat=unused:iv", lint = true), (25, "local val h in method unusedLocal is never used\nApplicable -Wconf / @nowarn filters for this message: msg=<part of the message>, cat=unused-locals, site=A.unusedLocal.h") :: Nil)
     check(errors(code, "site=A\\.unusedLocal\\..*:e", lint = true), l25 :: Nil)
   }
 
@@ -242,7 +243,7 @@ class WConfTest extends BytecodeTesting {
     def check(s: String, ev: Version): Unit = Version.fromString(s) match {
       case pv: Version.ParseableVersion =>
         assertEquals(ev, pv.copy(orig = ""))
-      case nv: Version.NonParseableVersion =>
+      case _: Version.NonParseableVersion =>
         assertTrue(s"failed to parse $s, expected $ev", ev.isInstanceOf[Version.NonParseableVersion])
     }
 
@@ -330,15 +331,21 @@ class WConfTest extends BytecodeTesting {
     check(v123, v124, ng)
   }
 
-  @Test
-  def sourcePatternTest(): Unit = {
-    def m(p: String) = Reporting.Message.Plain(
-      Position.offset(new BatchSourceFile(new PlainFile(new File(new JFile(p))) {
-        override lazy val canonicalPath: String = p
-      }, Array().toIndexedSeq), 0),
+  def wrapFileInMessage(file: AbstractFile) = Reporting.Message.Plain(
+      Position.offset(new BatchSourceFile(file, Array().toIndexedSeq), 0),
       msg = "",
       WarningCategory.Other,
-      site = "")
+      site = "",
+      actions = Nil)
+
+  @Test
+  def sourcePatternTest(): Unit = {
+    def m(p: String) = wrapFileInMessage(new PlainFile(
+      new File(new JFile(p)) {
+        // Avoid invoking getAbsolutePath() on the underlying JFile, as it will
+        // prepend the current working directory to Windows-like paths.
+        override def isAbsolute = true
+      }))
 
     val aTest = Reporting.WConf.parseFilter("src=a/.*Test.scala", rootDir = "").getOrElse(null)
     assertTrue(aTest.matches(m("/a/FooTest.scala")))
@@ -362,5 +369,47 @@ class WConfTest extends BytecodeTesting {
     assertTrue(!withRootDirWin.matches(m("c:/root/path/xa/FooTest.scala")))
     assertTrue(!withRootDirWin.matches(m("c:/root/a/FooTest.scala")))
     assertTrue(!withRootDirWin.matches(m("c:/root/path/b/a/FooTest.scala")))
+  }
+
+  @Test
+  def sourcePatternDoesNotResolveSymlinksTest(): Unit = {
+    def m(symlinkPath: String, actualPath: String) = wrapFileInMessage(
+        new PlainFile(new File(new JFile(symlinkPath))) {
+          // The filter implementation should no longer invoke canonicalPath,
+          // which will resolve symlink paths. See: scala/bug#13145.
+          override lazy val canonicalPath: String = actualPath
+        })
+
+    val externalFiles = Reporting.WConf.parseFilter(
+      "src=external/.*.scala", rootDir = "").getOrElse(null)
+
+    // Use different symlinks to avoid a cache hit in the second assertion.
+    assertTrue(externalFiles.matches(
+      m("external/FileInExternalDir.scala", "/tmp/external/File.scala")))
+    assertTrue(externalFiles.matches(
+      m("external/FileInCacheDir.scala", "/tmp/cache/File.scala")))
+  }
+
+  @Test
+  def sourcePatternMatchesNormalizedPaths(): Unit = {
+    def m(p: String) = wrapFileInMessage(new PlainFile(new File(new JFile(p)) {}))
+
+    val normalizedFiles = Reporting.WConf.parseFilter(
+      "src=foo/baz/.*.scala", rootDir = "").getOrElse(null)
+
+    assertTrue(normalizedFiles.matches(m("foo/./bar/../quux/../baz/File.scala")))
+  }
+
+  @Test
+  def sourcePatternMatchesVirtualFiles(): Unit = {
+    def m(p: String) = wrapFileInMessage(new VirtualFile(p))
+
+    val virtualFiles = Reporting.WConf.parseFilter(
+      "src=virtual/.*.scala", rootDir = "").getOrElse(null)
+
+    // Make sure the VirtualFile path starts with "/", otherwise the
+    // "src=virtual/.*" pattern will not match it. This is because the `src`
+    // parser prepends "/" to the regex to ensure it matches a path segment.
+    assertTrue(virtualFiles.matches(m("/virtual/File.scala")))
   }
 }

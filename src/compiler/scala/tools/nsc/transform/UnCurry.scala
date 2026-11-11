@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -22,7 +22,7 @@ import scala.reflect.internal.util.ListOfNil
 import scala.tools.nsc.Reporting.WarningCategory
 import scala.tools.nsc.symtab.Flags._
 
-/** - uncurry all symbol and tree types (@see UnCurryPhase) -- this includes normalizing all proper types.
+/** - uncurry all symbol and tree types -- this includes normalizing all proper types.
  *  - for every curried parameter list:  (ps_1) ... (ps_n) ==> (ps_1, ..., ps_n)
  *  - for every curried application: f(args_1)...(args_n) ==> f(args_1, ..., args_n)
  *  - for every type application: f[Ts] ==> f[Ts]() unless followed by parameters
@@ -51,8 +51,8 @@ import scala.tools.nsc.symtab.Flags._
  *
  *      meth(x_1,..., try { x_i } catch { ..}, .. x_b0) ==>
  *        {
- *          def liftedTry\$1 = try { x_i } catch { .. }
- *          meth(x_1, .., liftedTry\$1(), .. )
+ *          def liftedTree1\$1 = try { x_i } catch { .. }
+ *          meth(x_1, .., liftedTree1\$1(), .. )
  *        }
  *  - remove calls to elidable methods and replace their bodies with NOPs when elide-below
  *    requires it
@@ -90,7 +90,7 @@ abstract class UnCurry extends InfoTransform
       val canUseLambdaMetaFactory = (fun.attachments.get[SAMFunction] match {
         case Some(SAMFunction(userDefinedSamTp, sam, _)) =>
           // LambdaMetaFactory cannot mix in trait members for us, or instantiate classes -- only pure interfaces need apply
-          erasure.compilesToPureInterface(erasure.javaErasure(userDefinedSamTp).typeSymbol) &&
+          erasure.compilesToPureInterface(erasure.javaErasure(userDefinedSamTp).typeSymbol, sam) &&
           // impl restriction -- we currently use the boxed apply, so not really useful to allow specialized sam types (https://github.com/scala/scala/pull/4971#issuecomment-198119167)
           // specialization and LMF are at odds, since LMF implements the single abstract method,
           // but that's the one that specialization leaves generic, whereas we need to implement the specialized one to avoid boxing
@@ -194,7 +194,7 @@ abstract class UnCurry extends InfoTransform
 
         import treeInfo.{catchesThrowable, isSyntheticCase}
         for {
-          Try(t, catches, _) <- body
+          Try(_, catches, _) <- body
           cdef <- catches
           if catchesThrowable(cdef) && !isSyntheticCase(cdef)
         } {
@@ -207,7 +207,14 @@ abstract class UnCurry extends InfoTransform
 
 // ------ Transforming anonymous functions and by-name-arguments ----------------
 
-    /**  Transform a function node (x_1,...,x_n) => body of type FunctionN[T_1, .., T_N, R] to
+    /**  Transform a function node (x_1,...,x_n) => body of type FunctionN[T_1, .., T_N, R].
+     *
+     *  By default, the body is lifted to a method and the function becomes a call to it,
+     *  which delambdafy later turns into an invokedynamic of LambdaMetaFactory.
+     *
+     *  Under `-Ydelambdafy:inline`, in early initializers or superclass constructor arguments,
+     *  or when the SAM type cannot be implemented by LambdaMetaFactory (see `mustExpandFunction`),
+     *  the function is expanded into an anonymous class:
      *
      *    class \$anon() extends AbstractFunctionN[T_1, .., T_N, R] with Serializable {
      *      def apply(x_1: T_1, ..., x_N: T_n): R = body
@@ -398,7 +405,7 @@ abstract class UnCurry extends InfoTransform
      *  all lambda impl methods as static.
      */
     private def translateSynchronized(tree: Tree) = tree match {
-      case dd @ DefDef(_, _, _, _, _, Apply(fn, body :: Nil)) if isSelfSynchronized(dd) =>
+      case dd @ DefDef(_, _, _, _, _, Apply(_, body :: Nil)) if isSelfSynchronized(dd) =>
         log("Translating " + dd.symbol.defString + " into synchronized method")
         dd.symbol setFlag SYNCHRONIZED
         deriveDefDef(dd)(_ => body)
@@ -490,6 +497,11 @@ abstract class UnCurry extends InfoTransform
             else
               super.transform(tree)
 
+          case sel: Select if sel.qualifier.tpe.typeSymbol.isDerivedValueClass =>
+            // `c.f` where `c` is a value class is translated to `C.f$extension(c)` (value class member) or
+            // `new C(c).f()` (universal trait member). In both cases, `try` within `c` needs a lift.
+            withNeedLift(needLift = true) { super.transform(tree) }
+
           case Apply(fn, args) =>
             // Read the param symbols before `transform(fn)`, because UnCurry replaces T* by Seq[T] (see DesugaredParameterType).
             // The call to `transformArgs` below needs `formals` that still have varargs.
@@ -569,15 +581,6 @@ abstract class UnCurry extends InfoTransform
           TypeTree(tree.tpe) setPos tree.pos
         else
           tree
-      }
-
-      @tailrec def isThrowable(pat: Tree): Boolean = pat match {
-        case Typed(Ident(nme.WILDCARD), tpt) =>
-          tpt.tpe =:= ThrowableTpe
-        case Bind(_, pat) =>
-          isThrowable(pat)
-        case _ =>
-          false
       }
 
       tree match {
@@ -842,7 +845,7 @@ abstract class UnCurry extends InfoTransform
 
       val theTyper = typer.atOwner(dd, currentClass)
       val forwTree = theTyper.typedPos(dd.pos) {
-        val seqArgs = map3(newPs, oldPs, isRepeated)((param, oldParam, isRep) => {
+        val seqArgs = map3(newPs, oldPs, isRepeated)((param, _, isRep) => {
           if (!isRep) Ident(param)
           else {
             val parTp = elementType(ArrayClass, param.tpe)

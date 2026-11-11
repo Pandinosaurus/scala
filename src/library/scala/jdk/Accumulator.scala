@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -51,9 +51,9 @@ import scala.language.implicitConversions
   *   stringAcc: scala.jdk.AnyAccumulator[String] = AnyAccumulator(<>, <><>, <><><>, ...
   * }}}
   *
-  * There are two possibilities to process elements of a primitive Accumulator without boxing:
-  * specialized operations of the Accumulator, or the Stepper interface. The most common collection
-  * operations are overloaded or overridden in the primitive Accumulator classes, for example
+  * There are two possibilities to process elements of a primitive `Accumulator` without boxing:
+  * specialized operations of the `Accumulator`, or the `Stepper` interface. The most common collection
+  * operations are overloaded or overridden in the primitive `Accumulator` classes, for example
   * [[IntAccumulator.map(f:Int=>Int)* IntAccumulator.map]] or [[IntAccumulator.exists]].
   * Thanks to Scala's function specialization,
   * `intAcc.exists(x => testOn(x))` does not incur boxing.
@@ -124,7 +124,7 @@ abstract class Accumulator[@specialized(Double, Int, Long) A, +CC[X] <: mutable.
   /** Size of the accumulated collection, as a `Long` */
   final def sizeLong: Long = totalSize
 
-  /** Remove all accumulated elements from this accumulator. */
+  /** Removes all accumulated elements from this accumulator. */
   def clear(): Unit = {
     index = 0
     hIndex = 0

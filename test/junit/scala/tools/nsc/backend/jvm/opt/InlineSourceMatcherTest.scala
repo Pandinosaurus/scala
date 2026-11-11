@@ -12,6 +12,7 @@ import scala.tools.testkit.BytecodeTesting
 import scala.tools.testkit.BytecodeTesting._
 
 @RunWith(classOf[JUnit4])
+@annotation.nowarn("msg=Boolean literals should be passed using named argument syntax for parameter (negated|terminal)")
 class InlineSourceMatcherTest extends BytecodeTesting {
   import compiler._
 

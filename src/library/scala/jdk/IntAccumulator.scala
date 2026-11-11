@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -17,11 +17,12 @@ import java.util.Spliterator
 import java.util.function.{Consumer, IntConsumer}
 import java.{lang => jl}
 
+import scala.annotation._
 import scala.collection.Stepper.EfficientSplit
 import scala.collection.{AnyStepper, Factory, IntStepper, SeqFactory, Stepper, StepperShape, mutable}
 import scala.language.implicitConversions
 
-/** A specialized Accumulator that holds `Int`s without boxing, see [[Accumulator]]. */
+/** A specialized `Accumulator` that holds `Int`s without boxing, see [[Accumulator]]. */
 final class IntAccumulator
   extends Accumulator[Int, AnyAccumulator, IntAccumulator]
     with mutable.SeqOps[Int, AnyAccumulator, IntAccumulator]
@@ -241,6 +242,7 @@ final class IntAccumulator
   }
 
   /** Copies the elements in this `IntAccumulator` into an `Array[Int]` */
+  @nowarn // cat=lint-overload see toArray[B: ClassTag]
   def toArray: Array[Int] = {
     if (totalSize > Int.MaxValue) throw new IllegalArgumentException("Too many elements accumulated for an array: "+totalSize.toString)
     val a = new Array[Int](totalSize.toInt)

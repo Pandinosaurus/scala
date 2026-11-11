@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -22,7 +22,7 @@ import java.lang.invoke._
  */
 object LambdaDeserializer {
   /**
-   * Deserialize a lambda by calling `LambdaMetafactory.altMetafactory` to spin up a lambda class
+   * Deserializes a lambda by calling `LambdaMetafactory.altMetafactory` to spin up a lambda class
    * and instantiating this class with the captured arguments.
    *
    * A cache may be provided to ensure that subsequent deserialization of the same lambda expression

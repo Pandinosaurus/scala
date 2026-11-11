@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -105,7 +105,7 @@ import scala.annotation.meta.{ companionClass, companionMethod }
  */
 object Predef extends LowPriorityImplicits {
   /**
-   * Retrieve the runtime representation of a class type. `classOf[T]` is equivalent to
+   * Retrieves the runtime representation of a class type. `classOf[T]` is equivalent to
    * the class literal `T.class` in Java.
    *
    * @example {{{
@@ -122,7 +122,7 @@ object Predef extends LowPriorityImplicits {
   def classOf[T]: Class[T] = null // This is a stub method. The actual implementation is filled in by the compiler.
 
   /**
-   * Retrieve the single value of a type with a unique inhabitant.
+   * Retrieves the single value of a type with a unique inhabitant.
    *
    * @example {{{
    * object Foo
@@ -250,7 +250,7 @@ object Predef extends LowPriorityImplicits {
 
   // assertions ---------------------------------------------------------
 
-  /** Tests an expression, throwing an `AssertionError` if false.
+  /** Tests an expression, throwing an `AssertionError` if `false`.
    *  Calls to this method will not be generated if `-Xelide-below`
    *  is greater than `ASSERTION`.
    *
@@ -264,7 +264,7 @@ object Predef extends LowPriorityImplicits {
       throw new java.lang.AssertionError("assertion failed")
   }
 
-  /** Tests an expression, throwing an `AssertionError` if false.
+  /** Tests an expression, throwing an `AssertionError` if `false`.
    *  Calls to this method will not be generated if `-Xelide-below`
    *  is greater than `ASSERTION`.
    *
@@ -279,10 +279,10 @@ object Predef extends LowPriorityImplicits {
       throw new java.lang.AssertionError("assertion failed: "+ message)
   }
 
-  /** Tests an expression, throwing an `AssertionError` if false.
-   *  This method differs from assert only in the intent expressed:
-   *  assert contains a predicate which needs to be proven, while
-   *  assume contains an axiom for a static checker.  Calls to this method
+  /** Tests an expression, throwing an `AssertionError` if `false`.
+   *  This method differs from `assert` only in the intent expressed:
+   *  `assert` contains a predicate which needs to be proven, while
+   *  `assume` contains an axiom for a static checker.  Calls to this method
    *  will not be generated if `-Xelide-below` is greater than `ASSERTION`.
    *
    *  @see [[scala.annotation.elidable elidable]]
@@ -295,10 +295,10 @@ object Predef extends LowPriorityImplicits {
       throw new java.lang.AssertionError("assumption failed")
   }
 
-  /** Tests an expression, throwing an `AssertionError` if false.
-   *  This method differs from assert only in the intent expressed:
-   *  assert contains a predicate which needs to be proven, while
-   *  assume contains an axiom for a static checker.  Calls to this method
+  /** Tests an expression, throwing an `AssertionError` if `false`.
+   *  This method differs from `assert` only in the intent expressed:
+   *  `assert` contains a predicate which needs to be proven, while
+   *  `assume` contains an axiom for a static checker.  Calls to this method
    *  will not be generated if `-Xelide-below` is greater than `ASSERTION`.
    *
    *  @see [[scala.annotation.elidable elidable]]
@@ -312,7 +312,7 @@ object Predef extends LowPriorityImplicits {
       throw new java.lang.AssertionError("assumption failed: "+ message)
   }
 
-  /** Tests an expression, throwing an `IllegalArgumentException` if false.
+  /** Tests an expression, throwing an `IllegalArgumentException` if `false`.
    *  This method is similar to `assert`, but blames the caller of the method
    *  for violating the condition.
    *
@@ -324,7 +324,7 @@ object Predef extends LowPriorityImplicits {
       throw new IllegalArgumentException("requirement failed")
   }
 
-  /** Tests an expression, throwing an `IllegalArgumentException` if false.
+  /** Tests an expression, throwing an `IllegalArgumentException` if `false`.
    *  This method is similar to `assert`, but blames the caller of the method
    *  for violating the condition.
    *
@@ -409,7 +409,7 @@ object Predef extends LowPriorityImplicits {
 
   /** Prints an object to `out` using its `toString` method.
    *
-   *  @param x the object to print; may be null.
+   *  @param x the object to print; may be `null`.
    *  @group console-output
    */
   def print(x: Any): Unit = Console.print(x)
@@ -579,7 +579,7 @@ private[scala] abstract class LowPriorityImplicits extends LowPriorityImplicits2
 }
 
 private[scala] abstract class LowPriorityImplicits2 {
-  @deprecated("Implicit conversions from Array to immutable.IndexedSeq are implemented by copying; Use the more efficient non-copying ArraySeq.unsafeWrapArray or an explicit toIndexedSeq call", "2.13.0")
+  @deprecated("implicit conversions from Array to immutable.IndexedSeq are implemented by copying; use `toIndexedSeq` explicitly if you want to copy, or use the more efficient non-copying ArraySeq.unsafeWrapArray", since="2.13.0")
   implicit def copyArrayToImmutableIndexedSeq[T](xs: Array[T]): IndexedSeq[T] =
     if (xs eq null) null
     else new ArrayOps(xs).toIndexedSeq

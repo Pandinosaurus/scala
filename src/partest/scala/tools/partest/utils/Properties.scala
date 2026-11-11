@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -17,5 +17,5 @@ package utils
 object Properties extends scala.util.PropertiesTrait {
   protected def propCategory    = "scala-partest"
   protected def pickJarBasedOn  = classOf[nest.Runner]
-  override def isAvian = super.isAvian
+  override lazy val isAvian = javaVmName.contains("Avian")
 }

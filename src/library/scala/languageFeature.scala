@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -35,6 +35,7 @@ object languageFeature {
   @deprecated("scala.language.higherKinds no longer needs to be imported explicitly", "2.13.1")
   @meta.languageFeature("higher-kinded type", enableRequired = false)
   sealed trait higherKinds
+  @deprecated("scala.language.higherKinds no longer needs to be imported explicitly", "2.13.1")
   object higherKinds extends higherKinds
 
   @meta.languageFeature("#, which cannot be expressed by wildcards,", enableRequired = false)

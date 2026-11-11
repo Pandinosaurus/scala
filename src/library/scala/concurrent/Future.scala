@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,21 +14,21 @@ package scala.concurrent
 
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
-
-import scala.util.control.{NonFatal, NoStackTrace}
+import scala.util.control.{NoStackTrace, NonFatal}
 import scala.util.{Failure, Success, Try}
 import scala.concurrent.duration._
 import scala.collection.BuildFrom
-import scala.collection.mutable.{Builder, ArrayBuffer}
+import scala.collection.mutable.{ArrayBuffer, Builder}
 import scala.reflect.ClassTag
-
 import scala.concurrent.ExecutionContext.parasitic
+import scala.concurrent.impl.Promise.DefaultPromise
 
-/** A `Future` represents a value which may or may not *currently* be available,
+/** A `Future` represents a value which may or may not be currently available,
  *  but will be available at some point, or an exception if that value could not be made available.
  *
- *  Asynchronous computations that yield futures are created with the `Future.apply` call and are computed using a supplied `ExecutionContext`,
- * which can be backed by a Thread pool.
+ *  Asynchronous computations are created by calling `Future.apply`, which yields instances of `Future`.
+ *  Computations are executed using an `ExecutionContext`, which is usually supplied implicitly,
+ *  and which is commonly backed by a thread pool.
  *
  *  {{{
  *  import ExecutionContext.Implicits.global
@@ -40,6 +40,15 @@ import scala.concurrent.ExecutionContext.parasitic
  *    msg => println(msg)
  *  }
  *  }}}
+ *
+ *  Note that the `global` context is convenient but restricted:
+ *  "fatal" exceptions are reported only by printing a stack trace,
+ *  and the underlying thread pool may be shared by a mix of jobs.
+ *  For any nontrivial application, see the caveats explained at [[ExecutionContext]]
+ *  and also the overview linked below, which explains
+ *  [[https://docs.scala-lang.org/overviews/core/futures.html#exceptions exception handling]]
+ *  in depth.
+ *
  *
  *  @see [[https://docs.scala-lang.org/overviews/core/futures.html Futures and Promises]]
  *
@@ -55,8 +64,7 @@ import scala.concurrent.ExecutionContext.parasitic
  *  - `InterruptedException` - not contained within futures
  *  - all `scala.util.control.ControlThrowable` except `NonLocalReturnControl` - not contained within futures
  *
- *  Instead, the future is completed with a ExecutionException with one of the exceptions above
- *  as the cause.
+ *  Instead, the future is completed with an `ExecutionException` that has one of the exceptions above as its cause.
  *  If a future is failed with a `scala.runtime.NonLocalReturnControl`,
  *  it is completed with a value from that throwable instead.
  *
@@ -93,7 +101,7 @@ import scala.concurrent.ExecutionContext.parasitic
  * thread. That is, the implementation may run multiple callbacks
  * in a batch within a single `execute()` and it may run
  * `execute()` either immediately or asynchronously.
- * Completion of the Future must *happen-before* the invocation of the callback.
+ * Completion of the `Future` must *happen-before* the invocation of the callback.
  */
 trait Future[+T] extends Awaitable[T] {
 
@@ -116,7 +124,6 @@ trait Future[+T] extends Awaitable[T] {
    * @group Callbacks
    */
   def onComplete[U](f: Try[T] => U)(implicit executor: ExecutionContext): Unit
-
 
   /* Miscellaneous */
 
@@ -175,9 +182,9 @@ trait Future[+T] extends Awaitable[T] {
    */
   def foreach[U](f: T => U)(implicit executor: ExecutionContext): Unit = onComplete { _ foreach f }
 
-  /** Creates a new future by applying the 's' function to the successful result of
-   *  this future, or the 'f' function to the failed result. If there is any non-fatal
-   *  exception thrown when 's' or 'f' is applied, that exception will be propagated
+  /** Creates a new future by applying the `s` function to the successful result of
+   *  this future, or the `f` function to the failed result. If there is any non-fatal
+   *  exception thrown when `s` or `f` is applied, that exception will be propagated
    *  to the resulting future.
    *
    * @tparam S  the type of the returned `Future`
@@ -193,8 +200,8 @@ trait Future[+T] extends Awaitable[T] {
         else throw f(t.asInstanceOf[Failure[T]].exception) // will throw fatal errors!
     }
 
-  /** Creates a new Future by applying the specified function to the result
-   * of this Future. If there is any non-fatal exception thrown when 'f'
+  /** Creates a new `Future` by applying the specified function to the result
+   * of this `Future`. If there is any non-fatal exception thrown when `f`
    * is applied then that exception will be propagated to the resulting future.
    *
    * @tparam S  the type of the returned `Future`
@@ -204,8 +211,8 @@ trait Future[+T] extends Awaitable[T] {
    */
   def transform[S](f: Try[T] => Try[S])(implicit executor: ExecutionContext): Future[S]
 
-  /** Creates a new Future by applying the specified function, which produces a Future, to the result
-   * of this Future. If there is any non-fatal exception thrown when 'f'
+  /** Creates a new `Future` by applying the specified function, which produces a `Future`, to the result
+   * of this `Future`. If there is any non-fatal exception thrown when `f`
    * is applied then that exception will be propagated to the resulting future.
    *
    * @tparam S  the type of the returned `Future`
@@ -567,6 +574,12 @@ object Future {
   private[this] final val _addToBuilderFun: (Builder[Any, Nothing], Any) => Builder[Any, Nothing] = (b: Builder[Any, Nothing], e: Any) => b += e
   private[concurrent] final def addToBuilderFun[A, M] =  _addToBuilderFun.asInstanceOf[Function2[Builder[A, M], A, Builder[A, M]]]
 
+  private[concurrent] def waitUndefinedError(): Nothing =
+    throw new IllegalArgumentException("Cannot wait for Undefined duration of time")
+
+  private[concurrent] def timeoutError(delay: Duration): Nothing =
+    throw new TimeoutException(s"Future timed out after [$delay]")
+
   /** A Future which is never completed.
    */
   object never extends Future[Nothing] {
@@ -576,7 +589,7 @@ object Future {
     override final def ready(atMost: Duration)(implicit permit: CanAwait): this.type = {
       import Duration.{Undefined, Inf, MinusInf}
       atMost match {
-        case u if u eq Undefined => throw new IllegalArgumentException("cannot wait for Undefined period")
+        case u if u eq Undefined => waitUndefinedError()
         case `Inf`               =>
           while(!Thread.interrupted()) {
             LockSupport.park(this)
@@ -596,14 +609,14 @@ object Future {
         case _: FiniteDuration    => // Drop out if 0 or less
         case x: Duration.Infinite => throw new MatchError(x)
       }
-      throw new TimeoutException(s"Future timed out after [$atMost]")
+      timeoutError(atMost)
     }
 
     @throws[TimeoutException]
     @throws[InterruptedException]
     override final def result(atMost: Duration)(implicit permit: CanAwait): Nothing = {
       ready(atMost)
-      throw new TimeoutException(s"Future timed out after [$atMost]")
+      timeoutError(atMost)
     }
 
     override final def onComplete[U](f: Try[Nothing] => U)(implicit executor: ExecutionContext): Unit = ()
@@ -723,15 +736,28 @@ object Future {
     if (!i.hasNext) Future.never
     else {
       val p = Promise[T]()
-      val firstCompleteHandler = new AtomicReference[Promise[T]](p) with (Try[T] => Unit) {
-        override final def apply(v1: Try[T]): Unit =  {
-          val r = getAndSet(null)
-          if (r ne null)
-            r tryComplete v1 // tryComplete is likely to be cheaper than complete
+      val firstCompleteHandler = new AtomicReference(List.empty[() => Unit]) with (Try[T] => Unit) {
+        final def apply(res: Try[T]): Unit =  {
+          val deregs = getAndSet(null)
+          if (deregs != null) {
+            p.tryComplete(res) // tryComplete is likely to be cheaper than complete
+            deregs.foreach(_.apply())
+          }
         }
       }
-      while(i.hasNext && firstCompleteHandler.get != null) // exit early if possible
-        i.next().onComplete(firstCompleteHandler)
+      var completed = false
+      while (i.hasNext && !completed) {
+        val deregs = firstCompleteHandler.get
+        if (deregs == null) completed = true
+        else i.next() match {
+          case dp: DefaultPromise[T @unchecked] =>
+            val d = dp.onCompleteWithUnregister(firstCompleteHandler)
+            if (!firstCompleteHandler.compareAndSet(deregs, d :: deregs))
+              d.apply()
+          case f =>
+            f.onComplete(firstCompleteHandler)
+        }
+      }
       p.future
     }
   }
@@ -849,11 +875,11 @@ object Future {
    *  {{{
    *    val myFutureList = Future.traverse(myList)(x => Future(myFunc(x)))
    *  }}}
-   * @tparam A        the type of the value inside the Futures in the collection
+   * @tparam A        the type of the value inside the `Future`s in the collection
    * @tparam B        the type of the value of the returned `Future`
-   * @tparam M        the type of the collection of Futures
-   * @param in        the collection to be mapped over with the provided function to produce a collection of Futures that is then sequenced into a Future collection
-   * @param fn        the function to be mapped over the collection to produce a collection of Futures
+   * @tparam M        the type of the collection of `Future`s
+   * @param in        the collection to be mapped over with the provided function to produce a collection of `Future`s that is then sequenced into a `Future` collection
+   * @param fn        the function to be mapped over the collection to produce a collection of `Future`s
    * @return          the `Future` of the collection of results
    */
   final def traverse[A, B, M[X] <: IterableOnce[X]](in: M[A])(fn: A => Future[B])(implicit bf: BuildFrom[M[A], B, M[B]], executor: ExecutionContext): Future[M[B]] =

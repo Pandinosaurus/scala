@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,7 +14,7 @@ package scala.tools.nsc.transform.async
 
 import scala.collection.mutable
 import scala.tools.nsc.transform.{Transform, TypingTransformers}
-import scala.reflect.internal.util.{SourceFile, NoSourceFile}
+import scala.reflect.internal.util.{NoSourceFile, ReplBatchSourceFile, SourceFile}
 
 abstract class AsyncPhase extends Transform with TypingTransformers with AnfTransform with Lifter with LiveVariables {
   self =>
@@ -25,7 +25,7 @@ abstract class AsyncPhase extends Transform with TypingTransformers with AnfTran
   protected[async] val tracing = new Tracing
 
   val phaseName: String = "async"
-  override def enabled: Boolean = settings.async
+  override def enabled: Boolean = settings.async.value
 
   private final case class AsyncAttachment(awaitSymbol: Symbol, postAnfTransform: Block => Block,
                                            stateDiagram: ((Symbol, Tree) => Option[String => Unit]),
@@ -42,16 +42,17 @@ abstract class AsyncPhase extends Transform with TypingTransformers with AnfTran
   final def markForAsyncTransform(owner: Symbol, method: DefDef, awaitMethod: Symbol,
                                   config: Map[String, AnyRef]): DefDef = {
     val pos = owner.pos
-    if (!settings.async)
+    if (!settings.async.value)
       reporter.warning(pos, s"${settings.async.name} must be enabled for async transformation.")
     sourceFilesToTransform += pos.source
     val postAnfTransform = config.getOrElse("postAnfTransform", (x: Block) => x).asInstanceOf[Block => Block]
-    val stateDiagram = config.getOrElse("stateDiagram", (sym: Symbol, tree: Tree) => None).asInstanceOf[(Symbol, Tree) => Option[String => Unit]]
+    val stateDiagram = config.getOrElse("stateDiagram", (_: Symbol, _: Tree) => None).asInstanceOf[(Symbol, Tree) => Option[String => Unit]]
     val allowExceptionsToPropagate = config.contains("allowExceptionsToPropagate")
     method.updateAttachment(new AsyncAttachment(awaitMethod, postAnfTransform, stateDiagram, allowExceptionsToPropagate))
+    method.updateAttachment(ForceMatchDesugar)
     // Wrap in `{ expr: Any }` to force value class boxing before calling `completeSuccess`, see test/async/run/value-class.scala
     deriveDefDef(method) { rhs =>
-      Block(Apply(gen.mkAttributedRef(definitions.Predef_locally), rhs :: Nil), Literal(Constant(())))
+      Block(Apply(gen.mkAttributedRef(definitions.Predef_locally), rhs :: Nil).updateAttachment(TypedExpectingUnitAttachment), Literal(Constant(())))
     }.updateAttachment(ChangeOwnerAttachment(owner))
   }
 
@@ -61,7 +62,7 @@ abstract class AsyncPhase extends Transform with TypingTransformers with AnfTran
 
   /** Should refchecks defer reporting `@compileTimeOnly` errors for `sym` and instead let this phase issue the warning
    *  if they survive the async tranform? */
-  private[scala] def deferCompileTimeOnlyError(sym: Symbol): Boolean = settings.async && {
+  private[scala] def deferCompileTimeOnlyError(sym: Symbol): Boolean = settings.async.value && {
     awaits.contains(sym) || {
       val msg = sym.compileTimeOnlyMessage.getOrElse("")
       val shouldDefer =
@@ -74,12 +75,16 @@ abstract class AsyncPhase extends Transform with TypingTransformers with AnfTran
   // TOOD: figure out how to make the root-level async built-in macro sufficiently configurable:
   //       replace the ExecutionContext implicit arg with an AsyncContext implicit that also specifies the type of the Future/Awaitable/Node/...?
   final class AsyncTransformer(unit: CompilationUnit) extends TypingTransformer(unit) {
-    private lazy val liftableMap = new mutable.AnyRefMap[Symbol, (Symbol, List[Tree])]()
+    private lazy val liftableMap = new mutable.HashMap[Symbol, (Symbol, List[Tree])]()
 
     override def transformUnit(unit: CompilationUnit): Unit = {
-      if (settings.async) {
+      if (settings.async.value) {
         // NoSourceFile can happen for, e.g., toolbox compilation; overestimate by always transforming them. See test/async/jvm/toolbox.scala
-        val shouldTransform = unit.source == NoSourceFile || sourceFilesToTransform.contains(unit.source)
+        val shouldTransform = unit.source == NoSourceFile || sourceFilesToTransform(unit.source) || (unit.source match {
+          // scala/bug#13050, see also `PerRunReporting.repSrc`
+          case r: ReplBatchSourceFile => sourceFilesToTransform(r.parserSource)
+          case _ => false
+        })
         if (shouldTransform) super.transformUnit(unit)
         if (awaits.exists(_.isInitialized)) {
           unit.body.foreach {
@@ -103,7 +108,7 @@ abstract class AsyncPhase extends Transform with TypingTransformers with AnfTran
     // }
     //
     // The RHS of the method is transformed into a state machine with that transformation tailored by the
-    // attached `FutureSystem`. Local val/var/def/class/object trees that are referred to from multiple states
+    // `AsyncAttachment` (the await method, the post-ANF hook and so on). Local val/var/def/class/object trees that are referred to from multiple states
     // are lifted into members of the enclosing class.
     override def transform(tree: Tree): Tree =
       super.transform(tree) match {
@@ -122,7 +127,7 @@ abstract class AsyncPhase extends Transform with TypingTransformers with AnfTran
         case dd: DefDef if dd.hasAttachment[AsyncAttachment] =>
           val asyncAttachment = dd.getAndRemoveAttachment[AsyncAttachment].get
           val asyncBody = (dd.rhs: @unchecked) match {
-            case blk@Block(Apply(qual, body :: Nil) :: Nil, Literal(Constant(()))) => body
+            case Block(Apply(_, body :: Nil) :: Nil, Literal(Constant(()))) => body
           }
 
           atOwner(dd, dd.symbol) {
@@ -149,8 +154,7 @@ abstract class AsyncPhase extends Transform with TypingTransformers with AnfTran
               currentTransformState = saved
             }
           }
-        case tree =>
-          tree
+        case transformed => transformed
       }
 
     private def asyncTransform(asyncBody: Tree): (Tree, List[Tree]) = {

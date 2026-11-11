@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -89,7 +89,7 @@ sealed class PriorityQueue[A](implicit val ord: Ordering[A])
     def p_size0_=(s: Int) = size0 = s
     def p_array = array
     def p_ensureSize(n: Int) = super.ensureSize(n)
-    def p_ensureAdditionalSize(n: Int) = super.ensureAdditionalSize(n)
+    def p_ensureAdditionalSize(n: Int) = super.ensureSize(size0 + n)
     def p_swap(a: Int, b: Int): Unit = {
       val h = array(a)
       array(a) = array(b)
@@ -99,7 +99,12 @@ sealed class PriorityQueue[A](implicit val ord: Ordering[A])
 
   private val resarr = new ResizableArrayAccess[A]
 
-  resarr.p_size0 += 1                  // we do not use array(0) TODO: explain -- what is the first element even for?
+  // we do not use array(0)
+  // storing the root of the heap at array(1) simplifies the calculations for
+  // parent and child indices: for a given index k, the parent of k is k / 2,
+  // the left child is k * 2, and the right child is k * 2 + 1
+  resarr.p_size0 += 1
+  /** Alias for [[size]]. */
   def length: Int = resarr.length - 1  // adjust length accordingly
   override def size: Int = length
   override def knownSize: Int = length
@@ -110,6 +115,11 @@ sealed class PriorityQueue[A](implicit val ord: Ordering[A])
   override protected def newSpecificBuilder: Builder[A, PriorityQueue[A]] = PriorityQueue.newBuilder
   override def empty: PriorityQueue[A] = PriorityQueue.empty
 
+  /** Replaces the contents of this $coll with the mapped result.
+   *
+   *  @param f the mapping function
+   *  @return this $coll
+   */
   def mapInPlace(f: A => A): this.type = {
     resarr.mapInPlace(f)
     heapify(1)
@@ -236,11 +246,11 @@ sealed class PriorityQueue[A](implicit val ord: Ordering[A])
   def enqueue(elems: A*): Unit = { this ++= elems }
 
   /** Returns the element with the highest priority in the queue,
-    *  and removes this element from the queue.
-    *
-    *  @throws NoSuchElementException
-    *  @return   the element with the highest priority.
-    */
+   *  and removes this element from the queue.
+   *
+   *  @return the element with the highest priority.
+   *  @throws NoSuchElementException if no element to remove from heap
+   */
   def dequeue(): A =
     if (resarr.p_size0 > 1) {
       resarr.p_size0 = resarr.p_size0 - 1
@@ -252,6 +262,7 @@ sealed class PriorityQueue[A](implicit val ord: Ordering[A])
     } else
       throw new NoSuchElementException("no element to remove from heap")
 
+  /** Dequeues all elements and returns them in a sequence, in priority order. */
   def dequeueAll[A1 >: A]: immutable.Seq[A1] = {
     val b = ArrayBuilder.make[Any]
     b.sizeHint(size)

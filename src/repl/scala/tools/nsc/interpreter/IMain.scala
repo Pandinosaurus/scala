@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -10,35 +10,29 @@
  * additional information regarding copyright ownership.
  */
 
-// Copyright 2005-2017 LAMP/EPFL and Lightbend, Inc.
-
 package scala.tools.nsc.interpreter
 
-import java.io.{PrintWriter, StringWriter, Closeable}
+import java.io.{Closeable, PrintWriter, StringWriter}
 import java.net.URL
-
-import scala.annotation.tailrec
-import scala.collection.mutable
-import scala.collection.mutable.ListBuffer
+import scala.collection.mutable, mutable.ListBuffer
 import scala.language.implicitConversions
-import scala.reflect.internal.{FatalError, Flags, MissingRequirementError, NoPhase}
-import scala.reflect.runtime.{universe => ru}
 import scala.reflect.{ClassTag, classTag}
-import scala.reflect.internal.util.{AbstractFileClassLoader, BatchSourceFile, ListOfNil, Position, SourceFile}
+import scala.reflect.internal.{FatalError, Flags, MissingRequirementError, NoPhase, Precedence}
+import scala.reflect.internal.util.ScalaClassLoader.URLClassLoader
+import scala.reflect.internal.util.{AbstractFileClassLoader, BatchSourceFile, ListOfNil, Position, ReplBatchSourceFile, SourceFile}
+import scala.reflect.runtime.{universe => ru}
 import scala.tools.nsc.{Global, Settings}
+import scala.tools.nsc.interpreter.Results.{Error, Incomplete, Result, Success}
 import scala.tools.nsc.interpreter.StdReplTags.tagOfStdReplVals
 import scala.tools.nsc.io.AbstractFile
 import scala.tools.nsc.reporters.StoreReporter
 import scala.tools.nsc.typechecker.{StructuredTypeStrings, TypeStrings}
-import scala.reflect.internal.util.ScalaClassLoader.URLClassLoader
-import scala.tools.util.PathResolver
-import scala.tools.nsc.util.{stackTraceString, stringFromWriter}
-import scala.tools.nsc.interpreter.Results.{Error, Incomplete, Result, Success}
 import scala.tools.nsc.util.Exceptional.rootCause
+import scala.tools.nsc.util.{stackTraceString, stringFromWriter}
+import scala.tools.util.PathResolver
 import scala.util.{Try => Trying}
 import scala.util.chaining._
 import scala.util.control.NonFatal
-
 
 /** An interpreter for Scala code.
   *
@@ -347,21 +341,26 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
   override def translateEnclosingClass(n: String): Option[String] = symbolOfTerm(n).enclClass.toOption map flatPath
 
   /** If unable to find a resource foo.class, try taking foo as a symbol in scope
-    *  and use its java class name as a resource to load.
-    *
-    *  \$intp.classLoader classBytes "Bippy" or \$intp.classLoader getResource "Bippy.class" just work.
-    */
+   *  and use its java class name as a resource to load.
+   *
+   *  \$intp.classLoader classBytes "Bippy" or \$intp.classLoader getResource "Bippy.class" just work.
+   */
   private class TranslatingClassLoader(parent: ClassLoader) extends AbstractFileClassLoader(replOutput.dir, parent) {
     override protected def findAbstractFile(name: String): AbstractFile = super.findAbstractFile(name) match {
       case null if _initializeComplete => translateSimpleResource(name).map(super.findAbstractFile).orNull
       case file => file
     }
+    // if the name was mapped by findAbstractFile, supply null name to avoid name check in defineClass
+    override protected def findClass(name: String): Class[_] = {
+      val bytes = classBytes(name)
+      if (bytes.length == 0)
+        throw new ClassNotFoundException(name)
+      else
+        defineClass(/*name=*/null, bytes, 0, bytes.length, protectionDomain)
+    }
   }
   private def makeClassLoader(): AbstractFileClassLoader =
-    new TranslatingClassLoader({
-      _runtimeClassLoader = new URLClassLoader(compilerClasspath, parentClassLoader)
-      _runtimeClassLoader
-    })
+    new TranslatingClassLoader(new URLClassLoader(compilerClasspath, parentClassLoader).tap(_runtimeClassLoader_=))
 
   def allDefinedNames: List[Name]  = exitingTyper(replScope.toList.map(_.name).sorted)
   def unqualifiedIds: List[String] = allDefinedNames.map(_.decode).sorted
@@ -396,9 +395,7 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
     replScope enter sym
   }
 
-  def recordRequest(req: Request): Unit = {
-    if (req == null)
-      return
+  def recordRequest(req: Request): Unit = if (req != null) {
 
     prevRequests += req
 
@@ -421,7 +418,7 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
   }
 
   private[nsc] def replwarn(msg: => String): Unit = {
-    if (!settings.nowarnings)
+    if (!settings.nowarnings.value)
       reporter.printMessage(msg)
   }
 
@@ -449,14 +446,18 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
     prevRequestList collectFirst { case r if r.defines contains sym => r }
   }
 
-  private[interpreter] def requestFromLine(input: String, synthetic: Boolean = false, fatally: Boolean = false): Either[Result, Request] =
+  private[interpreter] def requestFromLine(input: String, synthetic: Boolean = false, fatally: Boolean = false): Either[Result, Request] = {
+    // The `currentRun` was used for compiling the previous line, ensure to clear out suspended messages.
+    // Also JLine and completion may run the parser in the same run before actual compilation.
+    currentRun.reporting.clearSuspendedMessages()
     parse(input, fatally) flatMap {
-      case (Nil, _) => Left(Error)
-      case (trees, firstXmlPos) =>
-        executingRequest = new Request(input, trees, firstXmlPos, synthetic = synthetic)
+      case (Nil, _, _) => Left(Error)
+      case (trees, firstXmlPos, parserSource) =>
+        executingRequest = new Request(input, trees, parserSource, firstXmlPos, synthetic = synthetic)
         reporter.currentRequest = executingRequest
         Right(executingRequest)
     }
+  }
 
   // dealias non-public types so we don't see protected aliases like Self
   def dealiasNonPublic(tp: Type) = tp match {
@@ -613,16 +614,14 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
   override lazy val power = new Power(this, new StdReplVals(this))(tagOfStdReplVals, classTag[StdReplVals])
 
   /** Here is where we:
-    *
-    *  1) Read some source code, and put it in the "read" object.
-    *  2) Evaluate the read object, and put the result in the "eval" object.
-    *  3) Create a String for human consumption, and put it in the "print" object.
-    *
-    *  Read! Eval! Print! Some of that not yet centralized here.
-    */
-  class ReadEvalPrint(val lineId: Int) {
-    def this() = this(freshLineId())
-
+   *
+   *  1) Read some source code, and put it in the "read" object.
+   *  2) Evaluate the read object, and put the result in the "eval" object.
+   *  3) Create a String for human consumption, and put it in the "print" object.
+   *
+   *  Read! Eval! Print! Some of that not yet centralized here.
+   */
+  class ReadEvalPrint(val lineId: Int = freshLineId()) {
     val packageName = sessionNames.packageName(lineId)
     val readName    = sessionNames.read
     val evalName    = sessionNames.eval
@@ -763,7 +762,6 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
       else parens(params.map(_.defString))
     }
 
-    @tailrec
     def loop(tpe: Type, acc: StringBuilder): StringBuilder = tpe match {
       case NullaryMethodType(resultType)  => acc ++= s": ${typeToCode(resultType.toString)}"
       case PolyType(tyParams, resultType) => loop(resultType, acc ++= tyParens(tyParams.map(_.defString)))
@@ -775,7 +773,7 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
   }
 
   /** One line of code submitted by the user for interpretation */
-  class Request(val line: String, origTrees: List[Tree], firstXmlPos: Position = NoPosition,
+  class Request(val line: String, origTrees: List[Tree], val parserSource: BatchSourceFile, firstXmlPos: Position = NoPosition,
                 generousImports: Boolean = false, synthetic: Boolean = false, storeResultInVal: Boolean = true) extends ReplRequest {
     def defines    = defHandlers flatMap (_.definedSymbols)
     def definesTermNames: List[String] = defines collect { case s: TermSymbol => s.decodedName.toString }
@@ -791,7 +789,7 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
     // pad with a trailing " " so that the synthetic position for enclosing trees does not exactly coincide with the
     // position of the user-written code, these seems to confuse the presentation compiler.
     private val paddedLine = line + " "
-    private val unit = new CompilationUnit(new BatchSourceFile(if (synthetic) "<synthetic>" else label, paddedLine))
+    private val unit = new CompilationUnit(new ReplBatchSourceFile(if (synthetic) "<synthetic>" else label, paddedLine, parserSource))
     // a dummy position used for synthetic trees (needed for pres compiler to locate the trees for user input)
     private val wholeUnit = Position.range(unit.source, 0, 0, paddedLine.length)
 
@@ -804,8 +802,9 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
     val trees: List[Tree] = origTrees match {
       case xs if !storeResultInVal => xs
       case init :+ tree =>
-        @tailrec def loop(scrut: Tree): Tree = scrut match {
+        def loop(scrut: Tree): Tree = scrut match {
           case _: Assign                => tree
+          case Apply(Select(_, op), _) if Precedence(op.decoded).level == 0 => tree
           case _: RefTree | _: TermTree => storeInVal(tree)
           case Annotated(_, arg)        => loop(arg)
           case _                        => tree
@@ -816,7 +815,7 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
     }
 
     /** handlers for each tree in this request */
-    val handlers: List[MemberHandler] = trees map (memberHandlers chooseHandler _)
+    val handlers: List[MemberHandler] = trees.map(memberHandlers.chooseHandler(_))
     val definesValueClass = handlers.exists(_.definesValueClass)
 
     val isClassBased = IMain.this.isClassBased && !definesValueClass
@@ -960,11 +959,21 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
 
 
     /** Compile the object file.  Returns whether the compilation succeeded.
-      *  If all goes well, the "types" map is computed. */
+     *  If all goes well, the "types" map is computed.
+     */
     def compile: Boolean = {
+      val compiledOK =
+        if (origTrees.forall(_.isInstanceOf[Import])) {
+          //settings.Wconf.value ::= "cat=unused-imports:s" // alternatively, suppression is effective
+          val saved = settings.warnUnused.value
+          settings.warnUnused.value -= settings.UnusedWarnings.Imports
+          try lineRep.compile(mkUnit)
+          finally settings.warnUnused.value = saved
+        }
+        else lineRep.compile(mkUnit)
 
       // compile the object containing the user's code
-      lineRep.compile(mkUnit) && {
+      compiledOK && {
         // extract and remember types
         typeOf
         typesOfDefinedTerms
@@ -1063,48 +1072,41 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
     def value(fullName: String) = {
       val runtimeMirror = this.runtimeMirror
       import runtimeMirror.universe.{Symbol, InstanceMirror, TermName}
-      val pkg :: rest = (fullName split '.').toList: @unchecked
+      val pkg :: path = fullName.split('.').toList: @unchecked
       val top = runtimeMirror.staticPackage(pkg)
-      @annotation.tailrec
       def loop(inst: InstanceMirror, cur: Symbol, path: List[String]): Option[Any] = {
         def mirrored =
           if (inst != null) inst
-          else runtimeMirror.reflect((runtimeMirror reflectModule cur.asModule).instance)
+          else runtimeMirror.reflect(runtimeMirror.reflectModule(cur.asModule).instance)
 
         path match {
           case last :: Nil  =>
             cur.typeSignature.decls.find(x => x.name.toString == last && x.isAccessor).map { m =>
               mirrored.reflectMethod(m.asMethod).apply()
             }
-          case next :: rest =>
-            val s = cur.typeSignature.member(TermName(next))
-            val i =
-              if (s.isModule) {
+          case next :: path =>
+            val sym = cur.typeSignature.member(TermName(next))
+            val inst1 =
+              if (sym.isModule)
                 if (inst == null) null
-                else runtimeMirror.reflect((runtimeMirror reflectModule s.asModule).instance)
-              }
-              else if (s.isAccessor) {
-                runtimeMirror.reflect(mirrored.reflectMethod(s.asMethod).apply())
-              }
-              else {
-                assert(false, fullName)
-                inst
-              }
-            loop(i, s, rest)
+                else runtimeMirror.reflect(runtimeMirror.reflectModule(sym.asModule).instance)
+              else if (sym.isAccessor) runtimeMirror.reflect(mirrored.reflectMethod(sym.asMethod).apply())
+              else throw new AssertionError(s"not a module or accessor ($sym) in: $fullName")
+            loop(inst1, sym, path)
           case Nil => None
         }
       }
-      loop(null, top, rest)
+      loop(inst = null, top, path)
     }
     Option(symbolOfTerm(id)).filter(_.exists).flatMap(s => Trying(value(originalPath(s))).toOption.flatten)
   }
 
   /** It's a bit of a shotgun approach, but for now we will gain in
-    *  robustness. Try a symbol-producing operation at phase typer, and
-    *  if that is NoSymbol, try again at phase flatten. I'll be able to
-    *  lose this and run only from exitingTyper as soon as I figure out
-    *  exactly where a flat name is sneaking in when calculating imports.
-    */
+   *  robustness. Try a symbol-producing operation at phase typer, and
+   *  if that is NoSymbol, try again at phase flatten. I'll be able to
+   *  lose this and run only from exitingTyper as soon as I figure out
+   *  exactly where a flat name is sneaking in when calculating imports.
+   */
   def tryTwice(op: => Symbol): Symbol = exitingTyper(op) orElse exitingFlatten(op)
 
   def symbolOfIdent(id: String): Symbol  = symbolOfType(id) orElse symbolOfTerm(id)
@@ -1166,19 +1168,20 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
   } with ExprTyper { }
 
   /** Parse a line into and return parsing result (error, incomplete or success with list of trees) */
-  def parse(line: String): Either[Result, (List[Tree], Position)] = parse(line, fatally = false)
-  def parse(line: String, fatally: Boolean): Either[Result, (List[Tree], Position)] = {
+  def parse(line: String): Either[Result, (List[Tree], Position, BatchSourceFile)] = parse(line, fatally = false)
+  def parse(line: String, fatally: Boolean): Either[Result, (List[Tree], Position, BatchSourceFile)] = {
     var isIncomplete = false
     val handler = if (fatally) null else (_: Position, _: String) => isIncomplete = true
     currentRun.parsing.withIncompleteHandler(handler) {
-      val unit = newCompilationUnit(line, label)
+      val source = newSourceFile(line, label)
+      val unit = new CompilationUnit(source)
       val trees = newUnitParser(unit).parseStats()
       if (!isIncomplete)
         runReporting.summarizeErrors()
       if (reporter.hasErrors) Left(Error)
       else if (isIncomplete) Left(Incomplete)
-      else if (reporter.hasWarnings && settings.fatalWarnings) Left(Error)
-      else Right((trees, unit.firstXmlPos))
+      else if (reporter.hasWarnings && settings.fatalWarnings.value) Left(Error)
+      else Right((trees, unit.firstXmlPos, source))
     }.tap(_ => if (!isIncomplete) reporter.reset())
   }
 
@@ -1234,7 +1237,7 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
             // This is really just trying to make the 100 or so implicits imported
             // by default into something readable.
             val memberGroups: List[List[Symbol]] = {
-              val groups = members groupBy (_.tpe.finalResultType) toList
+              val groups = members.groupBy(_.tpe.finalResultType).toList
               val (big, small) = groups partition (_._2.size > 3)
               val xss = (
                 (big sortBy (_._1.toString) map (_._2)) :+
@@ -1258,7 +1261,7 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
     (implicits.toList,
       if (filtered.nonEmpty)
         "" // collected in implicits
-      else if (global.settings.nopredef || global.settings.noimports)
+      else if (global.settings.nopredef.value || global.settings.noimports.value)
         "No implicits have been imported."
       else
         "No implicits have been imported other than those in Predef."
@@ -1267,6 +1270,7 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
 
   override def kindCommandInternal(typeString: String, verbose: Boolean): String = {
     import scala.util.control.Exception.catching
+    import global.kinds.{Kind, TypeConKind, inferKind}
     val catcher = catching(classOf[MissingRequirementError],
       classOf[ScalaReflectionException])
 
@@ -1286,7 +1290,7 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
           val kind = exitingTyper {
             val sym = tpe.typeSymbol.asClass
             val owner = sym.owner
-            val kind0 = intp.global.inferKind(NoPrefix)(TypeRef(pre, sym, Nil), owner)
+            val kind0 = inferKind(NoPrefix)(TypeRef(pre, sym, Nil), owner)
             kind0 match {
               case TypeConKind(bounds, kargs) if args.size == kargs.size =>
                 TypeConKind(bounds, (args.toList zip kargs.toList) flatMap {
@@ -1303,7 +1307,7 @@ class IMain(val settings: Settings, parentClassLoaderOverride: Option[ClassLoade
           val kind = exitingTyper {
             val sym = tpe.typeSymbol.asClass
             val owner = sym.owner
-            intp.global.inferKind(NoPrefix)(tpe, owner)
+            inferKind(NoPrefix)(tpe, owner)
           }
           kindMsg(tpe, kind, verbose)
         }
@@ -1406,7 +1410,7 @@ object IMain {
    */
   private[interpreter] def withSuppressedSettings[A](settings: Settings, global: => Global)(body: => A): A = {
     import settings.{reporter => _, _}
-    val wasWarning = !nowarn
+    val wasWarning = !nowarn.value
     val oldMaxWarn = maxwarns.value
     val noisy = List(Xprint, Ytyperdebug, browse)
     val current = (Xprint.value, Ytyperdebug.value, browse.value)

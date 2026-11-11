@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -75,7 +75,7 @@ private[reflect] trait SymbolLoaders { self: SymbolTable =>
     override def complete(sym: Symbol): Unit = {
       assert(sym.isPackageClass, "Must be package")
       // Time travel to a phase before refchecks avoids an initialization issue. `openPackageModule`
-      // creates a module symbol and invokes invokes `companionModule` while the `infos` field is
+      // creates a module symbol and invokes `companionModule` while the `infos` field is
       // still null. This calls `isModuleNotMethod`, which forces the `info` if run after refchecks.
       slowButSafeEnteringPhaseNotLaterThan(picklerPhase) {
         sym setInfo new ClassInfoType(List(), new PackageScope(sym), sym)
@@ -111,7 +111,7 @@ private[reflect] trait SymbolLoaders { self: SymbolTable =>
 
     // materializing multiple copies of the same symbol in PackageScope is a very popular bug
     // this override does its best to guard against it
-    override def enter[T <: Symbol](sym: T): T = {
+    override def enter[T <: Symbol](sym: T): sym.type = {
       // workaround for scala/bug#7728
       if (isCompilerUniverse) super.enter(sym)
       else {

@@ -1,18 +1,167 @@
 package scala.collection
 package immutable
 
-import org.junit.runner.RunWith
-import org.junit.runners.JUnit4
-import org.junit.Test
 import org.junit.Assert._
+import org.junit.Test
 
+import java.io.NotSerializableException
+import java.util.concurrent.{ConcurrentLinkedQueue, CountDownLatch}
+import java.util.concurrent.atomic.AtomicInteger
 import scala.annotation.unused
+import scala.collection.immutable.LazyListTest.sd
 import scala.collection.mutable.{Builder, ListBuffer}
 import scala.tools.testkit.AssertUtil
 import scala.util.Try
 
-@RunWith(classOf[JUnit4])
 class LazyListTest {
+
+  /*
+  def countAlloc[T](f: => T): Int = {
+    locally(LazyList.empty) // init
+    LazyList.k = 0
+    f
+    LazyList.k
+  }
+
+  @Test def counts(): Unit = {
+    // N*3
+    println(countAlloc((1 #:: 2 #:: 3 #:: 4 #:: LazyList.empty).toList))
+
+    // N*4
+    println(countAlloc(LazyList.from(1).take(10).toList))
+
+    // N*6
+    println(countAlloc(LazyList.from(1).take(20).take(10).toList))
+  }
+  */
+
+  @Test def consNull(): Unit = {
+    val ll = LazyList.cons(1, LazyList.cons(2, null))
+    assert(ll.head == 1)
+    assert(ll.tail.head == 2)
+    locally(ll.tail.tail)
+    AssertUtil.assertThrows[NullPointerException](ll.tail.tail.head)
+
+    val ll1 = LazyList.cons[AnyRef](null, null)
+    assert(ll1.head == null)
+    locally(ll1.tail)
+    AssertUtil.assertThrows[NullPointerException](ll1.tail.head)
+  }
+
+  @Test def throwEval(): Unit = {
+    var bad = true
+    val ll = 1 #:: { if (bad) { bad = false; throw new RuntimeException() }; 2} #:: LazyList.empty
+    try ll.toList catch { case _: RuntimeException => () }
+    assertTrue(ll.toList == List(1, 2))
+  }
+
+  @Test def racySerialization(): Unit = {
+    import sd._
+    val ll = 1 #:: { Thread.sleep(500); 2} #:: LazyList.empty
+    new Thread(() => println(ll.toList)).start()
+    Thread.sleep(200)
+    AssertUtil.assertThrows[NotSerializableException](serialize(ll), msg => msg.contains("java.lang.Thread") || msg.contains("InRace"))
+  }
+
+  @Test def forceSameCellManyThreads(): Unit = {
+    val N = 8
+    val trials = 5
+    for (trial <- 1 to trials) {
+      val counts = Array.fill(20)(new AtomicInteger(0))
+      val ll = LazyList.tabulate(20) { i =>
+        counts(i).incrementAndGet()
+        i * 10
+      }
+      val go = new CountDownLatch(1)
+      val done = new CountDownLatch(N)
+      val results = new ConcurrentLinkedQueue[List[Int]]
+      for (_ <- 1 to N)
+        new Thread(() => {
+          go.await()
+          results.add(ll.toList)
+          done.countDown()
+        }).start()
+      go.countDown()
+      done.await()
+
+      val expected = (0 until 20).map(_ * 10).toList
+      val it = results.iterator
+      var seen = 0
+      while (it.hasNext) { assertEquals(s"trial $trial", expected, it.next()); seen += 1 }
+      assertEquals(s"trial $trial: result count", N, seen)
+      for (i <- 0 until 20)
+        assertEquals(s"trial $trial: element $i evaluated multiple times", 1, counts(i).get())
+    }
+  }
+
+  @Test def initStateExceptionRecovery(): Unit = {
+    var n = 0
+    val ll = 1 #:: {
+      n += 1
+      if (n == 1) throw new RuntimeException("first attempt throws") else 2
+    } #:: LazyList.empty
+
+    AssertUtil.assertThrows[RuntimeException](ll.toList, _.contains("first attempt throws"))
+    assertEquals(List(1, 2), ll.toList)
+    assertEquals(2, n)
+  }
+
+  @Test def storeNull(): Unit = {
+    val l = "1" #:: null #:: "2" #:: LazyList.empty
+    assert(l.toList == List("1", null, "2"))
+    assert(l.tail.head == null)
+    assert(!l.tail.isEmpty)
+  }
+
+  @Test def nse(): Unit = {
+    val l = 1 #:: 2 #:: LazyList.empty
+    AssertUtil.assertThrows[NoSuchElementException](l.tail.tail.head)
+    AssertUtil.assertThrows[UnsupportedOperationException](l.tail.tail.tail)
+  }
+
+  @Test
+  def serialization(): Unit = {
+    import sd._
+
+    val emptyD = serializeDeserialize(LazyList.empty)
+    assertNotSame(LazyList.empty, emptyD) // deserialization creates a new instance with both fields `null`
+    assertEquals(LazyList.empty, emptyD)
+
+    val l = LazyList.from(10)
+
+    val ld1 = serializeDeserialize(l)
+    assertEquals(l.take(10).toList, ld1.take(10).toList)
+
+    l.tail.head
+    val ld2 = serializeDeserialize(l)
+    assertEquals(l.take(10).toList, ld2.take(10).toList)
+
+    // this used to be a test for scala/scala#10118
+    // we used to have: `knownIsEmpty = stateEvaluated && (state eq State.Empty)` a forged stream could have
+    //   `stateEvaluated = true` but a non-evaluated `state` lazy val, leading to lazyState evaluation.
+    // after scala/scala#10942, the test no longer makes sense, as the original attack path is no longer possible.
+    //   we have `knownIsEmpty = stateDefined && isEmpty`, if `!stateDefined` then `isEmpty` can no longer trigger
+    //   `lazyState` evaluation
+    LazyListTest.serializationForceCount = 0
+    val u = LazyList.from(10).map(x => { LazyListTest.serializationForceCount += 1; x })
+
+    assertEquals(LazyListTest.serializationForceCount, 0)
+
+    u.head
+    assertEquals(LazyListTest.serializationForceCount, 1)
+
+    val data = serialize(u)
+
+    val ud = deserialize(data).asInstanceOf[LazyList[Int]]
+
+    assertEquals(LazyListTest.serializationForceCount, 1)
+
+    ud.tail.head
+    assertEquals(LazyListTest.serializationForceCount, 2)
+
+    u.tail.head
+    assertEquals(LazyListTest.serializationForceCount, 3)
+  }
 
   @Test
   def t6727_and_t6440_and_8627(): Unit = {
@@ -150,6 +299,20 @@ class LazyListTest {
     assertEquals("LazyList(1)", l.toString)
   }
 
+  @Test def toStringTailCycle(): Unit = {
+    lazy val xs: LazyList[Int] = 1 #:: 2 #:: xs
+    xs.tail.tail.head
+    assertEquals("LazyList(1, 2, <cycle>)", xs.toString)
+    assertEquals("LazyList(2, 1, <cycle>)", xs.tail.toString)
+    assertEquals("LazyList(1, 2, <cycle>)", xs.tail.tail.toString)
+
+    val ys = 0 #:: xs
+    ys.tail.tail.tail.head
+    assertEquals("LazyList(0, 1, 2, <cycle>)", ys.toString)
+    assertEquals("LazyList(1, 2, <cycle>)", ys.tail.toString)
+    assertEquals("LazyList(2, 1, <cycle>)", ys.tail.tail.toString)
+  }
+
   @Test
   def testLazyListToStringWhenLazyListHasCyclicReference(): Unit = {
     lazy val cyc: LazyList[Int] = 1 #:: 2 #:: 3 #:: 4 #:: cyc
@@ -166,6 +329,10 @@ class LazyListTest {
     assertEquals("LazyList(1, 2, 3, 4, <not computed>)", cyc.toString)
     cyc.tail.tail.tail.tail.head
     assertEquals("LazyList(1, 2, 3, 4, <cycle>)", cyc.toString)
+
+    lazy val c1: LazyList[Int] = 1 #:: c1
+    c1.tail.tail.tail
+    assertEquals("LazyList(1, <cycle>)", c1.toString)
   }
 
   @Test
@@ -190,10 +357,13 @@ class LazyListTest {
     assertEquals( "LazyList(1, 2, 3)", xs.toString())
   }
 
-  val cycle1: LazyList[Int] = 1 #:: 2 #:: cycle1
-  val cycle2: LazyList[Int] = 1 #:: 2 #:: 3 #:: cycle2
   @Test(timeout=10000)
   def testSameElements(): Unit = {
+    object i {
+      val cycle1: LazyList[Int] = 1 #:: 2 #:: cycle1
+      val cycle2: LazyList[Int] = 1 #:: 2 #:: 3 #:: cycle2
+    }
+    import i._
     assert(LazyList().sameElements(LazyList()))
     assert(!LazyList().sameElements(LazyList(1)))
     assert(LazyList(1,2).sameElements(LazyList(1,2)))
@@ -358,7 +528,7 @@ class LazyListTest {
     def assertNoStackOverflow[A](lazyList: LazyList[A]): Unit = {
       // don't hang the test if we've made a programming error in this test
       val finite = lazyList.take(1000)
-      AssertUtil.assertThrows[RuntimeException](finite.force, _ contains "self-referential")
+      AssertUtil.assertThrows[RuntimeException](finite.force, _ contains "self-reference")
     }
     assertNoStackOverflow { class L { val ll: LazyList[Nothing] = LazyList.empty #::: ll }; (new L).ll }
     assertNoStackOverflow { class L { val ll: LazyList[Int] = 1 #:: ll.map(_ + 1).filter(_ % 2 == 0) }; (new L).ll }
@@ -368,6 +538,8 @@ class LazyListTest {
     }
     assertNoStackOverflow((new L).a)
     assertNoStackOverflow((new L).b)
+
+    assertNoStackOverflow { object t { val ll: LazyList[Int] = 1 #:: ll.drop(1) }; t.ll }
   }
 
   // scala/bug#11931
@@ -376,5 +548,27 @@ class LazyListTest {
     var count = 0
     LazyList(1).lazyAppendedAll({ count += 1; Seq(2)}).toList
     assertEquals(1, count)
+  }
+}
+
+object LazyListTest {
+  var serializationForceCount = 0
+
+  object sd {
+    import java.io._
+
+    def serialize(obj: AnyRef): Array[Byte] = {
+      val buffer = new ByteArrayOutputStream
+      val out = new ObjectOutputStream(buffer)
+      out.writeObject(obj)
+      buffer.toByteArray
+    }
+
+    def deserialize(a: Array[Byte]): AnyRef = {
+      val in = new ObjectInputStream(new ByteArrayInputStream(a))
+      in.readObject
+    }
+
+    def serializeDeserialize[T <: AnyRef](obj: T) = deserialize(serialize(obj)).asInstanceOf[T]
   }
 }

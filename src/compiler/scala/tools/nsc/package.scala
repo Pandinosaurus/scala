@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -11,6 +11,8 @@
  */
 
 package scala.tools
+
+import scala.reflect.internal.util.StringContextStripMarginOps
 
 package object nsc {
   type Mode = scala.reflect.internal.Mode
@@ -32,4 +34,8 @@ package object nsc {
 
   @deprecated("Use scala.reflect.internal.util.ListOfNil", "2.11.0")
   lazy val ListOfNil = scala.reflect.internal.util.ListOfNil
+
+  /** Adds the `sm` interpolator to a [[scala.StringContext]].
+   */
+  implicit val `strip margin`: StringContext => StringContextStripMarginOps = StringContextStripMarginOps
 }

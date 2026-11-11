@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -530,7 +530,7 @@ trait Internals { self: Universe =>
     /** Set symbol's type signature to given type.
      *  @return the symbol itself
      */
-    def setInfo[S <: Symbol](sym: S, tpe: Type): S
+    def setInfo[S <: Symbol](sym: S, tpe: Type): sym.type
 
     /** Set symbol's annotations to given annotations `annots`.
      */
@@ -1098,7 +1098,7 @@ trait Internals { self: Universe =>
   trait CompatApi {
     /** @see [[CompatToken]] */
     @deprecated("compatibility with Scala 2.10 EOL", "2.13.0")
-    implicit val token = new CompatToken
+    implicit val token: CompatToken = new CompatToken
 
     /** Scala 2.10 compatibility enrichments for BuildApi. */
     @deprecated("compatibility with Scala 2.10 EOL", "2.13.0")

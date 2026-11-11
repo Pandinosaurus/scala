@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -49,13 +49,23 @@ trait IndexedSeqOps[+A, +CC[_], +C] extends Any with SeqOps[A, CC, C] { self =>
 
   override def reverseIterator: Iterator[A] = view.reverseIterator
 
-  override def foldRight[B](z: B)(op: (A, B) => B): B = {
-    val it = reverseIterator
-    var b = z
-    while (it.hasNext)
-      b = op(it.next(), b)
-    b
-  }
+  /* TODO 2.14+ uncomment and delete related code in IterableOnce
+  @tailrec private def foldl[B](start: Int, end: Int, z: B, op: (B, A) => B): B =
+    if (start == end) z
+    else foldl(start + 1, end, op(z, apply(start)), op)
+   */
+
+  @tailrec private def foldr[B](start: Int, end: Int, z: B, op: (A, B) => B): B =
+    if (start == end) z
+    else foldr(start, end - 1, op(apply(end - 1), z), op)
+
+  //override def foldLeft[B](z: B)(op: (B, A) => B): B = foldl(0, length, z, op)
+
+  override def foldRight[B](z: B)(op: (A, B) => B): B = foldr(0, length, z, op)
+
+  //override def reduceLeft[B >: A](op: (B, A) => B): B = if (length > 0) foldl(1, length, apply(0), op) else super.reduceLeft(op)
+
+  //override def reduceRight[B >: A](op: (A, B) => B): B = if (length > 0) foldr(0, length - 1, apply(length - 1), op) else super.reduceRight(op)
 
   override def view: IndexedSeqView[A] = new IndexedSeqView.Id[A](this)
 
@@ -81,11 +91,30 @@ trait IndexedSeqOps[+A, +CC[_], +C] extends Any with SeqOps[A, CC, C] { self =>
 
   override def slice(from: Int, until: Int): C = fromSpecific(new IndexedSeqView.Slice(this, from, until))
 
-  override def head: A = apply(0)
+  override def sliding(size: Int, step: Int): Iterator[C] = {
+    require(size >= 1 && step >= 1, s"size=$size and step=$step, but both must be positive")
+    new IndexedSeqSlidingIterator[A, CC, C](this, size, step)
+  }
+
+  override def head: A =
+    if (!isEmpty) apply(0)
+    else throw new NoSuchElementException(s"head of empty ${
+      self match {
+        case self: IndexedSeq[_] => self.collectionClassName
+        case _ => toString
+      }
+    }")
 
   override def headOption: Option[A] = if (isEmpty) None else Some(head)
 
-  override def last: A = apply(length - 1)
+  override def last: A =
+    if (!isEmpty) apply(length - 1)
+    else throw new NoSuchElementException(s"last of empty ${
+      self match {
+        case self: IndexedSeq[_] => self.collectionClassName
+        case _ => toString
+      }
+    }")
 
   // We already inherit an efficient `lastOption = if (isEmpty) None else Some(last)`
 
@@ -119,5 +148,28 @@ trait IndexedSeqOps[+A, +CC[_], +C] extends Any with SeqOps[A, CC, C] { self =>
         case  _ => Found(idx)
       }
     }
+  }
+}
+
+/** A fast sliding iterator for IndexedSeqs which uses the underlying `slice` operation. */
+private final class IndexedSeqSlidingIterator[A, CC[_], C](s: IndexedSeqOps[A, CC, C], size: Int, step: Int)
+  extends AbstractIterator[C] {
+
+  private[this] val len = s.length
+  private[this] var pos = 0
+  private def chklen: Boolean = len == s.length || {
+    throw new java.util.ConcurrentModificationException("collection size changed during iteration")
+    false
+  }
+
+  def hasNext: Boolean = chklen && pos < len
+
+  def next(): C = if (!chklen || !hasNext) Iterator.empty.next() else {
+    val end = { val x = pos + size; if (x < 0 || x > len) len else x } // (pos.toLong + size).min(len).toInt
+    val slice = s.slice(pos, end)
+    pos =
+      if (end >= len) len
+      else { val x = pos + step; if (x < 0 || x > len) len else x } // (pos.toLong + step).min(len).toInt
+    slice
   }
 }

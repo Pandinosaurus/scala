@@ -1,5 +1,5 @@
 
-// scalac: -Yrangepos
+//
 //
 object Test {
   class Foo {

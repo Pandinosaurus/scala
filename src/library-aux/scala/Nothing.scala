@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -20,8 +20,8 @@ package scala
  *  [[scala.collection.immutable.Nil]] of type `List[Nothing]`. Because lists are covariant in Scala,
  *  this makes [[scala.collection.immutable.Nil]] an instance of `List[T]`, for any element of type `T`.
  *
- *  Another usage for Nothing is the return type for methods which never return normally.
- *  One example is method error in [[scala.sys]], which always throws an exception.
+ *  Another usage for `Nothing` is the return type for methods which never return normally.
+ *  One example is method `error` in [[scala.sys]], which always throws an exception.
  */
 sealed trait Nothing
 

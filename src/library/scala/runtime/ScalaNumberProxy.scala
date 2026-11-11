@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -50,6 +50,7 @@ trait ScalaNumberProxy[T] extends Any with ScalaNumericAnyConversions with Typed
   @deprecated("use `sign` method instead", since = "2.13.0") def signum: Int = num.signum(self)
 }
 trait ScalaWholeNumberProxy[T] extends Any with ScalaNumberProxy[T] {
+  @deprecated("isWhole on an integer type is always true", "2.12.15")
   def isWhole = true
 }
 trait IntegralProxy[T] extends Any with ScalaWholeNumberProxy[T] with RangedProxy[T] {

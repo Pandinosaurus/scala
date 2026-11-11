@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -91,7 +91,7 @@ class BufferedSource(inputStream: InputStream, bufferSize: Int)(implicit val cod
    *  Note: This function may temporarily load the entire buffer into
    *  memory.
    */
-  override def addString(sb: StringBuilder, start: String, sep: String, end: String): StringBuilder =
+  override def addString(sb: StringBuilder, start: String, sep: String, end: String): sb.type =
     if (sep.isEmpty) {
       val allReader = decachedReader
       val buf = new Array[Char](bufferSize)

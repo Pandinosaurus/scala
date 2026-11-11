@@ -10,7 +10,7 @@ object PartestUtil {
     val srcDir = testBase / srcPath // mirror of partest.nest.PathSettings#srcDir
 
     private val testCaseFile   = GlobFilter("*.scala") | GlobFilter("*.java") | GlobFilter("*.res")
-    private val testCaseDir    = new SimpleFileFilter(f => f.isDirectory() && f.listFiles().nonEmpty && !(f.getParentFile / (f.getName + ".res")).exists())
+    private val testCaseDir    = new SimpleFileFilter(f => f.isDirectory && f.listFiles().nonEmpty && !(f.getParentFile / (f.getName + ".res")).exists())
     private val testCaseFilter = testCaseFile || testCaseDir
     private val testCaseFinder = srcDir * AllPassFilter * testCaseFilter
 
@@ -36,7 +36,8 @@ object PartestUtil {
     val knownUnaryOptions = List(
       "--pos", "--neg", "--run", "--jvm", "--res", "--ant", "--scalap", "--specialized",
       "--instrumented", "--presentation", "--failed", "--update-check", "--no-exec",
-      "--show-diff", "--show-log", "--verbose", "--terse", "--debug", "--version", "--help")
+      "--show-diff", "--show-log", "--verbose", "--terse", "--debug", "--realeasy", "--branch", "--version",
+      "--help")
     val srcPathOption = "--srcpath"
     val compilerPathOption = "--compilerpath"
     val grepOption = "--grep"
@@ -71,7 +72,7 @@ object PartestUtil {
                 val next = prefix + suffix
                 testFile.getParentFile / next
               }
-              val assocFiles = List(".check", ".flags").map(sibling)
+              val assocFiles = List(".check").map(sibling)
               val sourceFiles = if (testFile.isFile) List(testFile) else testFile.**(AllPassFilter).get.toList
               val allFiles = testFile :: assocFiles ::: sourceFiles
               allFiles.exists(f => f.isFile && re.findFirstIn(IO.read(f)).isDefined)
@@ -88,7 +89,7 @@ object PartestUtil {
         (matchingFileContent ++ matchingFileName).map(_._2).distinct.sorted
       }
 
-      val completion = Completions.strict(Set("<filename glob>", "<regex> (for source, flags or checkfile contents)").map(s => Completion.displayOnly(s)))
+      val completion = Completions.strict(Set("<filename glob>", "<regex> (for source or checkfile contents)").map(s => Completion.displayOnly(s)))
       val tokenCompletion = TokenCompletions.fixed((seen, level) => completion)
 
       val globOrPattern = StringBasic.map(expandGrep).flatMap {

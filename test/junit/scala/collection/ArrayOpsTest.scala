@@ -5,6 +5,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 
+import scala.tools.testkit.AssertUtil.assertThrows
+
 @RunWith(classOf[JUnit4])
 class ArrayOpsTest {
 
@@ -124,6 +126,31 @@ class ArrayOpsTest {
   }
 
   @Test
+  def `transpose still incorrectly throws class cast exception`(): Unit = {
+    // If ArrayOps.transpose is fixed, this test should be updated to be positive
+    // and the method's Scaladoc should be updated to reflect the state of the method.
+    // See scala/bug#13178
+    assertThrows[ClassCastException] {
+      val _: Array[Array[Int]] = Array().transpose((_: Object) => Array(1))
+    }
+  }
+
+  @Test
+  def transpose(): Unit = {
+    assertArrayEquals(Array[Object](), Array(Array[Object]()).transpose.asInstanceOf[Array[Object]])
+
+    assertArrayEquals(
+      Array(Array(1, 3), Array(2, 4)).asInstanceOf[Array[Object]],
+      Array(Array(1, 2), Array(3, 4)).transpose.asInstanceOf[Array[Object]]
+    )
+
+    assertArrayEquals(
+      Array(Array(1, 1), Array(2, 2)).asInstanceOf[Array[Object]],
+      Array(new Object(), new Object()).transpose(_ => Array(1, 2)).asInstanceOf[Array[Object]]
+    )
+  }
+
+  @Test
   def `empty intersection has correct component type for array`(): Unit = {
     val something = Array(3.14)
     val nothing   = Array[Double]()
@@ -150,8 +177,19 @@ class ArrayOpsTest {
       .iterator
       .drop(Int.MaxValue)
       .drop(Int.MaxValue)  // potential index overflow to negative
-    assert(!it.hasNext)    // bug had index as negative and this returning true
+    assertFalse(it.hasNext)// bug had index as negative and this returning true
                            // even though the index is both out of bounds and should
                            // always be between `0` and `Array#length`.
+  }
+
+  @Test def `array collect`: Unit = {
+    val vs = (1 to 10).toArray
+    val res = vs.collect { case n if n%2 == 0 => 10*n }
+    assertArrayEquals((2 to 10 by 2).map(_ * 10).toArray, res)
+  }
+  @Test def `array collect first`: Unit = {
+    val vs = (1 to 10).toArray
+    val res = vs.collectFirst { case n if n > 4 => 10*n }
+    assertEquals(Some(50), res)
   }
 }

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -290,7 +290,7 @@ trait BitSetOps[+C <: BitSet with BitSetOps[C]]
   @`inline` final def ^ (other: BitSet): C = xor(other)
 
   /**
-    * Builds a new bitset by applying a function to all elements of this bitset
+    * Builds a new bitset by applying a function to all elements of this bitset.
     * @param f the function to apply to each element.
     * @return a new bitset resulting from applying the given function ''f'' to
     *         each element of this bitset and collecting the results

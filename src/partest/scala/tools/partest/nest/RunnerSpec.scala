@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,7 +13,6 @@
 package scala.tools.partest.nest
 
 import language.postfixOps
-import scala.annotation.nowarn
 
 trait RunnerSpec extends Spec with Meta.StdOpts with Interpolation {
   def referenceSpec       = RunnerSpec
@@ -56,8 +55,10 @@ trait RunnerSpec extends Spec with Meta.StdOpts with Interpolation {
   val optDebug        = "debug"        / "enable debugging output, preserve generated files" --?
 
   heading("Other options:")
-  val optVersion      = "version"      / "show Scala version and exit"  --?
-  val optHelp         = "help"         / "show this page and exit"      --?
+  val optDev     = "realeasy" / "real easy way to test --release 8 and check uncommitted checks" --?
+  val optBranch  = "branch"   / "test changes on this branch"                                    --?
+  val optVersion = "version"  / "show Scala version and exit"                                    --?
+  val optHelp    = "help"     / "show this page and exit"                                        --?
 
 }
 
@@ -68,6 +69,5 @@ object RunnerSpec extends RunnerSpec with Reference {
   def creator(args: List[String]): ThisCommandLine = new CommandLine(RunnerSpec, args)
 
   // TODO: restructure to avoid using early initializers
-  @nowarn("cat=deprecation&msg=early initializers")
   def forArgs(args: Array[String]): Config = new { val parsed = creator(args.toList) } with Config
 }

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -73,7 +73,7 @@ import scala.runtime.Statics
   */
 trait Iterator[+A] extends IterableOnce[A] with IterableOnceOps[A, Iterator, Iterator[A]] { self =>
 
-  /** Check if there is a next element available.
+  /** Checks if there is a next element available.
     *
     * @return `true` if there is a next element, `false` otherwise
     * @note   Reuse: $preservesIterator
@@ -83,7 +83,7 @@ trait Iterator[+A] extends IterableOnce[A] with IterableOnceOps[A, Iterator, Ite
   @deprecated("hasDefiniteSize on Iterator is the same as isEmpty", "2.13.0")
   @`inline` override final def hasDefiniteSize = isEmpty
 
-  /** Return the next element and advance the iterator.
+  /** Returns the next element and advances the iterator.
     *
     * @throws NoSuchElementException if there is no next element.
     * @return the next element.
@@ -155,7 +155,7 @@ trait Iterator[+A] extends IterableOnce[A] with IterableOnceOps[A, Iterator, Ite
    */
   class GroupedIterator[B >: A](self: Iterator[B], size: Int, step: Int) extends AbstractIterator[immutable.Seq[B]] {
 
-    require(size >= 1 && step >= 1, f"size=$size%d and step=$step%d, but both must be positive")
+    require(size >= 1 && step >= 1, s"size=$size and step=$step, but both must be positive")
 
     private[this] var buffer: Array[B] = null                 // current result
     private[this] var prev: Array[B] = null                   // if sliding, overlap from previous result
@@ -413,7 +413,17 @@ trait Iterator[+A] extends IterableOnce[A] with IterableOnceOps[A, Iterator, Ite
 
   @deprecated("Call scanRight on an Iterable instead.", "2.13.0")
   def scanRight[B](z: B)(op: (A, B) => B): Iterator[B] = ArrayBuffer.from(this).scanRight(z)(op).iterator
-
+ 
+  /** Finds index of the first element satisfying some predicate after or at some start index.
+    *
+    *  $mayNotTerminateInf
+    *
+    *  @param  p     the predicate used to test elements.
+    *  @param  from   the start index
+    *  @return the index `>= from` of the first element of this $coll that satisfies the predicate `p`,
+    *           or `-1`, if none exists.
+    *  @note   Reuse: $consumesIterator
+    */
   def indexWhere(p: A => Boolean, from: Int = 0): Int = {
     var i = math.max(from, 0)
     val dropped = drop(from)
@@ -589,8 +599,8 @@ trait Iterator[+A] extends IterableOnce[A] with IterableOnceOps[A, Iterator, Ite
     /** Trillium logic boolean: -1 = unknown, 0 = false, 1 = true */
     private[this] var _hasNext: Int = -1
 
-    private[this] def nextCur(): Unit = {
-      cur = null
+    def nextCur(): Unit = {
+      cur = Iterator.empty
       cur = f(self.next()).iterator
       _hasNext = -1
     }
@@ -834,17 +844,14 @@ trait Iterator[+A] extends IterableOnce[A] with IterableOnceOps[A, Iterator, Ite
    *  @param that  the collection to compare
    *  @tparam B    the type of the elements of collection `that`.
    *  @return `true` if both collections contain equal elements in the same order, `false` otherwise.
-   *
-   *    @inheritdoc
    */
   def sameElements[B >: A](that: IterableOnce[B]): Boolean = {
     val those = that.iterator
-    while (hasNext && those.hasNext)
-      if (next() != those.next())
-        return false
-    // At that point we know that *at least one* iterator has no next element
-    // If *both* of them have no elements then the collections are the same
-    hasNext == those.hasNext
+    while (hasNext) {
+      if (!those.hasNext) return false
+      if (next() != those.next()) return false
+    }
+    !those.hasNext
   }
 
   /** Creates two new iterators that both iterate over the same elements
@@ -972,7 +979,7 @@ object Iterator extends IterableFactory[Iterator] {
     def hasNext = false
     def next() = throw new NoSuchElementException("next on empty iterator")
     override def knownSize: Int = 0
-    override protected def sliceIterator(from: Int, until: Int) = this
+    override protected def sliceIterator(from: Int, until: Int): AbstractIterator[Nothing] = this
   }
 
   /** Creates a target $coll from an existing source collection
@@ -1112,7 +1119,7 @@ object Iterator extends IterableFactory[Iterator] {
     }
   }
 
-  /** Creates an Iterator that uses a function `f` to produce elements of type `A`
+  /** Creates an `Iterator` that uses a function `f` to produce elements of type `A`
     * and update an internal state of type `S`.
     *
     * @param init State initial value
@@ -1120,7 +1127,7 @@ object Iterator extends IterableFactory[Iterator] {
     *             the end of the collection)
     * @tparam A   Type of the elements
     * @tparam S   Type of the internal state
-    * @return an Iterator that produces elements using `f` until `f` returns `None`
+    * @return an `Iterator` that produces elements using `f` until `f` returns `None`
     */
   override def unfold[A, S](init: S)(f: S => Option[(A, S)]): Iterator[A] = new UnfoldIterator(init)(f)
 
@@ -1257,9 +1264,15 @@ object Iterator extends IterableFactory[Iterator] {
         else if (until <= lo) 0               // empty
         else if (unbounded) until - lo        // now finite
         else adjustedBound min (until - lo)   // keep lesser bound
+      val sum = dropping + lo
       if (rest == 0) empty
+      else if (sum < 0) {
+        dropping = Int.MaxValue
+        remaining = 0
+        this.concat(new SliceIterator(underlying, start = sum - Int.MaxValue, limit = rest))
+      }
       else {
-        dropping += lo
+        dropping = sum
         remaining = rest
         this
       }

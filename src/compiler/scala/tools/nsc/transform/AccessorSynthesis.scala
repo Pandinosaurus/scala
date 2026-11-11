@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -9,8 +9,6 @@
  * See the NOTICE file distributed with this work for
  * additional information regarding copyright ownership.
  */
-
-// Copyright 2005-2017 LAMP/EPFL and Lightbend, Inc
 
 package scala.tools.nsc
 package transform
@@ -328,7 +326,7 @@ trait AccessorSynthesis extends Transform with ast.TreeDSL {
             // TODO is this case ever hit? constructors does not generate Assigns with EmptyTree for the rhs AFAICT
             // !!! Ident(self) is never referenced, is it supposed to be confirming
             // that self is anything in particular?
-            case Apply(lhs@Select(Ident(self), _), EmptyTree.asList) if lhs.symbol.isSetter => Nil
+            case Apply(lhs@Select(Ident(_), _), EmptyTree.asList) if lhs.symbol.isSetter => Nil
             case stat => List(stat)
           }
 
@@ -357,7 +355,7 @@ trait AccessorSynthesis extends Transform with ast.TreeDSL {
         else rhs
 
       private def mkCheckedAccessorRhs(retVal: Tree, pos: Position, bitmap: BitmapInfo): Tree = {
-        val msg = s"Uninitialized field: ${clazz.sourceFile}: ${pos.line}"
+        val msg = s"Uninitialized field: ${clazz.sourceFile.name}: ${pos.line}"
         val result =
           IF(mkTest(bitmap, equalToZero = false)).
             THEN(retVal).

@@ -7,8 +7,7 @@ import java.util.{Date, Locale, Properties, TimeZone}
 import java.io.{File, FileInputStream, StringWriter}
 import java.text.SimpleDateFormat
 import java.time.Instant
-import java.time.format.DateTimeFormatter
-import java.time.temporal.{TemporalAccessor, TemporalQueries, TemporalQuery}
+import java.time.format.DateTimeFormatter.ISO_DATE_TIME
 import scala.collection.JavaConverters._
 import BuildSettings.autoImport._
 
@@ -30,7 +29,7 @@ object VersionUtil {
   )
 
   lazy val generatePropertiesFileSettings = Seq[Setting[_]](
-    copyrightString := "Copyright 2002-2022, LAMP/EPFL and Lightbend, Inc.",
+    copyrightString := "Copyright 2002-2026, LAMP/EPFL and Lightbend, Inc. dba Akka",
     shellBannerString := """
       |     ________ ___   / /  ___
       |    / __/ __// _ | / /  / _ |
@@ -69,8 +68,8 @@ object VersionUtil {
     val (dateObj, sha) = {
       try {
         // Use JGit to get the commit date and SHA
-        import org.eclipse.jgit.storage.file.FileRepositoryBuilder
         import org.eclipse.jgit.revwalk.RevWalk
+        import org.eclipse.jgit.storage.file.FileRepositoryBuilder
         val db = new FileRepositoryBuilder().findGitDir.build
         val head = db.resolve("HEAD")
         if (head eq null) {
@@ -79,9 +78,7 @@ object VersionUtil {
             // Workaround lack of git worktree support in JGit https://bugs.eclipse.org/bugs/show_bug.cgi?id=477475
             val sha = List("git", "rev-parse", "HEAD").!!.trim
             val commitDateIso = List("git", "log", "-1", "--format=%cI", "HEAD").!!.trim
-            val date = java.util.Date.from(DateTimeFormatter.ISO_DATE_TIME.parse(commitDateIso, new TemporalQuery[Instant] {
-              override def queryFrom(temporal: TemporalAccessor): Instant = Instant.from(temporal)
-            }))
+            val date = Date.from(ISO_DATE_TIME.parse(commitDateIso, Instant.from _))
             (date, sha.substring(0, 7))
           } catch {
             case ex: Exception =>
@@ -130,7 +127,7 @@ object VersionUtil {
     val (base, suffix) = {
       val (b, s) = (baseVersion.value, baseVersionSuffix.value)
       if(s == "SPLIT") {
-        val split = """([\w+\.]+)(-[\w+\.-]+)??""".r
+        val split = """([\w+.]+)(-[\w+.-]+)??""".r
         val split(b2, sOrNull) = b
         (b2, Option(sOrNull).map(_.drop(1)).getOrElse(""))
       } else (b, s)
@@ -145,11 +142,12 @@ object VersionUtil {
     }
 
     val (canonicalV, mavenSuffix, osgiV, release) = suffix match {
-      case "SNAPSHOT"     => (s"$base-$date-$sha",   s"-$cross-SNAPSHOT",      s"$base.v$date-$sha",         false)
-      case "SHA-SNAPSHOT" => (s"$base-$date-$sha",   s"-$cross-$sha-SNAPSHOT", s"$base.v$date-$sha",         false)
-      case "SHA"          => (s"$base-$sha",         s"-$cross-$sha",          s"$base.v$date-$sha",         false)
-      case ""             => (s"$base",              "",                       s"$base.v$date-VFINAL-$sha",  true)
-      case _              => (s"$base-$suffix",      s"-$suffix",              s"$base.v$date-$suffix-$sha", true)
+      case "SNAPSHOT"          => (s"$base-$date-$sha",   s"-$cross-SNAPSHOT",           s"$base.v$date-$sha",         false)
+      case "SHA-SNAPSHOT"      => (s"$base-$date-$sha",   s"-$cross-$sha-SNAPSHOT",      s"$base.v$date-$sha",         false)
+      case "SHA-TEST-SNAPSHOT" => (s"$base-$date-$sha",   s"-$cross-$sha-TEST-SNAPSHOT", s"$base.v$date-$sha",         false)
+      case "SHA"               => (s"$base-$sha",         s"-$cross-$sha",               s"$base.v$date-$sha",         false)
+      case ""                  => (s"$base",              "",                            s"$base.v$date-VFINAL-$sha",  true)
+      case _                   => (s"$base-$suffix",      s"-$suffix",                   s"$base.v$date-$suffix-$sha", true)
     }
 
 

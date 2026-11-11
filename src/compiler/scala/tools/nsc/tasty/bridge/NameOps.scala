@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -47,6 +47,7 @@ trait NameOps { self: TastyUniverse =>
 
   object tpnme {
 
+    final val Object: String = "Object"
     final val Or: String = "|"
     final val And: String = "&"
     final val AnyKind: String = "AnyKind"
@@ -54,6 +55,8 @@ trait NameOps { self: TastyUniverse =>
     final val Tuple: String = "Tuple"
     final val Matchable: String = "Matchable"
 
+    val ErasedFunctionN = raw"ErasedFunction(\d+)".r
+    val ErasedContextFunctionN = raw"ErasedContextFunction(\d+)".r
     val ContextFunctionN = raw"ContextFunction(\d+)".r
     val FunctionN        = raw"Function(\d+)".r
 

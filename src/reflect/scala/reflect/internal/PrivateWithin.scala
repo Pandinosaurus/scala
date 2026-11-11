@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -17,8 +17,8 @@ package internal
 import java.lang.{ Class => jClass }
 import java.lang.reflect.{ Member => jMember }
 
-trait PrivateWithin {
-  self: SymbolTable =>
+final class PrivateWithin[U <: SymbolTable with Singleton](val self: U) {
+  import self._
 
   def propagatePackageBoundary(c: jClass[_], syms: Symbol*): Unit =
     propagatePackageBoundary(JavaAccFlags(c), syms: _*)

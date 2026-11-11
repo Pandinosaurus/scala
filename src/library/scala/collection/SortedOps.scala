@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -77,13 +77,13 @@ trait SortedOps[A, +C] {
    */
   def rangeUntil(until: A): C = rangeImpl(None, Some(until))
 
-  /** Create a range projection of this collection with no lower-bound.
+  /** Creates a range projection of this collection with no lower-bound.
     *  @param to The upper-bound (inclusive) of the ranged projection.
     */
   @deprecated("Use rangeTo", "2.13.0")
   final def to(to: A): C = rangeTo(to)
 
-  /** Create a range projection of this collection with no lower-bound.
+  /** Creates a range projection of this collection with no lower-bound.
     *  @param to The upper-bound (inclusive) of the ranged projection.
     */
   def rangeTo(to: A): C

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -19,8 +19,8 @@ import scala.annotation.tailrec
 
 /** Loads `library.properties` from the jar. */
 object Properties extends PropertiesTrait {
-  protected def propCategory    = "library"
-  protected def pickJarBasedOn  = classOf[Option[_]]
+  protected def propCategory = "library"
+  protected def pickJarBasedOn: Class[Option[_]] = classOf[Option[_]]
 
   /** Scala manifest attributes.
    */
@@ -71,45 +71,28 @@ private[scala] trait PropertiesTrait {
   def scalaPropOrEmpty(name: String): String             = scalaPropOrElse(name, "")
   def scalaPropOrNone(name: String): Option[String]      = Option(scalaProps.getProperty(name)).orElse(propOrNone("scala." + name))
 
-  /** The numeric portion of the runtime Scala version, if this is a final
-   *  release.  If for instance the versionString says "version 2.9.0.final",
-   *  this would return Some("2.9.0").
-   *
-   *  @return Some(version) if this is a final release build, None if
-   *  it is an RC, Beta, etc. or was built from source, or if the version
-   *  cannot be read.
+  /** The version of the Scala runtime, if this is not a snapshot.
    */
-  val releaseVersion =
-    for {
-      v <- scalaPropOrNone("maven.version.number")
-      if !(v endsWith "-SNAPSHOT")
-    } yield v
+  val releaseVersion = scalaPropOrNone("maven.version.number").filterNot(_.endsWith("-SNAPSHOT"))
 
-  /** The development Scala version, if this is not a final release.
-   *  The precise contents are not guaranteed, but it aims to provide a
-   *  unique repository identifier (currently the svn revision) in the
-   *  fourth dotted segment if the running version was built from source.
-   *
-   *  @return Some(version) if this is a non-final version, None if this
-   *  is a final release or the version cannot be read.
+  /** The version of the Scala runtime, if this is a snapshot.
    */
-  val developmentVersion =
-    for {
-      v <- scalaPropOrNone("maven.version.number")
-      if v endsWith "-SNAPSHOT"
-      ov <- scalaPropOrNone("version.number")
-    } yield ov
+  val developmentVersion = scalaPropOrNone("maven.version.number").filter(_.endsWith("-SNAPSHOT")).flatMap(_ => scalaPropOrNone("version.number"))
 
-  /** Either the development or release version if known, otherwise
-   *  the empty string.
+  /** The version of the Scala runtime, or the empty string if unknown.
+   *
+   *  Note that the version of the Scala library need not correlate with the version of the Scala compiler
+   *  used to emit either the library or user code.
+   *
+   *  For example, Scala 3.0 and 3.1 use the Scala 2.13 library, which is reflected in this version string.
+   *  For the Dotty version, see `dotty.tools.dotc.config.Properties.versionNumberString`.
    */
   def versionNumberString = scalaPropOrEmpty("version.number")
 
-  /** The version number of the jar this was loaded from plus "version " prefix,
-   *  or "version (unknown)" if it cannot be determined.
+  /** A verbose alternative to [[versionNumberString]].
    */
-  val versionString         = "version " + scalaPropOrElse("version.number", "(unknown)")
-  val copyrightString       = scalaPropOrElse("copyright.string", "Copyright 2002-2022, LAMP/EPFL and Lightbend, Inc.")
+  val versionString         = s"version ${scalaPropOrElse("version.number", "(unknown)")}"
+  val copyrightString       = scalaPropOrElse("copyright.string", "Copyright 2002-2026, LAMP/EPFL and Lightbend, Inc. dba Akka")
 
   /** This is the encoding to use reading in source files, overridden with -encoding.
    *  Note that it uses "prop" i.e. looks in the scala jar, not the system properties.
@@ -147,20 +130,30 @@ private[scala] trait PropertiesTrait {
 
   /* Some derived values. */
   /** Returns `true` iff the underlying operating system is a version of Microsoft Windows. */
-  def isWin                 = osName startsWith "Windows"
+  lazy val isWin            = osName.startsWith("Windows")
   // See https://mail.openjdk.java.net/pipermail/macosx-port-dev/2012-November/005148.html for
   // the reason why we don't follow developer.apple.com/library/mac/#technotes/tn2002/tn2110.
   /** Returns `true` iff the underlying operating system is a version of Apple Mac OSX.  */
-  def isMac                 = osName startsWith "Mac OS X"
+  lazy val isMac            = osName.startsWith("Mac OS X")
   /** Returns `true` iff the underlying operating system is a Linux distribution. */
-  def isLinux               = osName startsWith "Linux"
+  lazy val isLinux          = osName.startsWith("Linux")
 
   /* Some runtime values. */
-  private[scala] def isAvian = javaVmName contains "Avian"
+  private[scala] lazy val isAvian = javaVmName.contains("Avian")
 
   private[scala] def coloredOutputEnabled: Boolean = propOrElse("scala.color", "auto") match {
-    case "auto" => System.console() != null && !isWin
-    case s      => s == "" || "true".equalsIgnoreCase(s)
+    case "auto" => consoleIsTerminal
+    case s      => "" == s || "true".equalsIgnoreCase(s)
+  }
+
+  /** `System.console.isTerminal`, or just check for `null` console on JDK < 22 */
+  private[scala] lazy val consoleIsTerminal: Boolean = {
+    import language.reflectiveCalls
+    val console = System.console
+    def isTerminal: Boolean =
+      try console.asInstanceOf[{ def isTerminal(): Boolean }].isTerminal()
+      catch { case _: NoSuchMethodException => false }
+    console != null && (!isJavaAtLeast("22") || isTerminal)
   }
 
   // This is looking for javac, tools.jar, etc.

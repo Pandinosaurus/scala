@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -12,7 +12,7 @@
 
 package scala.tools.nsc.transform.patmat
 
-import scala.annotation.tailrec
+import scala.annotation._
 import scala.collection.mutable
 import scala.tools.nsc.symtab.Flags.{MUTABLE, STABLE}
 import scala.tools.nsc.Reporting.WarningCategory
@@ -35,7 +35,7 @@ trait MatchOptimization extends MatchTreeMaking with MatchApproximation {
      * the variable is floated up so that its scope includes all of the program that shares it
      * we generalize sharing to implication, where b reuses a if a => b and priors(a) => priors(b) (the priors of a sub expression form the path through the decision tree)
      */
-    def doCSE(prevBinder: Symbol, cases: List[List[TreeMaker]], pt: Type, selectorPos: Position): List[List[TreeMaker]] = {
+    def doCSE(prevBinder: Symbol, cases: List[List[TreeMaker]], @unused pt: Type, selectorPos: Position): List[List[TreeMaker]] = {
       debug.patmat("before CSE:")
       showTreeMakers(cases)
 
@@ -56,7 +56,7 @@ trait MatchOptimization extends MatchTreeMaking with MatchApproximation {
         val cond = test.prop
 
         def simplify(c: Prop): Set[Prop] = c match {
-          case And(ops)                   => ops flatMap simplify
+          case And(ops)                   => ops.flatMap(simplify).toSet
           case Or(ops)                    => Set(False) // TODO: make more precise
           case Not(Eq(Var(_), NullConst)) => Set.empty  // not worth remembering
           case True                       => Set.empty  // same
@@ -130,9 +130,8 @@ trait MatchOptimization extends MatchTreeMaking with MatchApproximation {
             // if the shared prefix contains interesting conditions (!= True)
             // and the last of such interesting shared conditions reuses another treemaker's test
             // replace the whole sharedPrefix by a ReusingCondTreeMaker
-            for (lastShared <- sharedPrefix.reverse.dropWhile(_.prop == True).headOption;
-                 lastReused <- reusesTest(lastShared))
-              yield ReusingCondTreeMaker(sharedPrefix, reusesTest, reusedOrOrig) :: suffix.map(_.treeMaker)
+            for (lastShared <- sharedPrefix.reverse.dropWhile(_.prop == True).headOption; _ <- reusesTest(lastShared))
+            yield ReusingCondTreeMaker(sharedPrefix, reusesTest, reusedOrOrig) :: suffix.map(_.treeMaker)
           }
 
         collapsedTreeMakers getOrElse tests.map(_.treeMaker) // sharedPrefix need not be empty (but it only contains True-tests, which are dropped above)
@@ -208,6 +207,8 @@ trait MatchOptimization extends MatchTreeMaking with MatchApproximation {
   //// SWITCHES
   trait SwitchEmission extends TreeMakers with MatchMonadInterface {
     import treeInfo.isGuardedCase
+
+    def inForceDesugar: Boolean
 
     abstract class SwitchMaker {
       abstract class SwitchableTreeMakerExtractor { def unapply(x: TreeMaker): Option[Tree] }
@@ -304,7 +305,7 @@ trait MatchOptimization extends MatchTreeMaking with MatchApproximation {
               // the patterns in same are equal (according to caseEquals)
               // we can thus safely pick the first one arbitrarily, provided we correct binding
               val origPatWithoutBind = commonPattern match {
-                case Bind(b, orig) => orig
+                case Bind(_, orig) => orig
                 case o => o
               }
               // need to replace `defaultSym` as well -- it's used in `defaultBody` (see `jumpToDefault` above)
@@ -312,7 +313,8 @@ trait MatchOptimization extends MatchTreeMaking with MatchApproximation {
               (Bind(binder, origPatWithoutBind), unifiedBody)
             }
 
-          atPos(commonPattern.pos)(CaseDef(pat, EmptyTree, guardedBodySubst))
+          val samePos = wrappingPos(same.flatMap(k => List(k.pat, k.body)))
+          atPos(samePos)(CaseDef(pat, EmptyTree, guardedBodySubst))
         }
 
         // requires cases.exists(isGuardedCase) (otherwise the rewrite is pointless)
@@ -479,9 +481,12 @@ trait MatchOptimization extends MatchTreeMaking with MatchApproximation {
             else {
               def wrapInDefaultLabelDef(cd: CaseDef): CaseDef =
                 if (needDefaultLabel) deriveCaseDef(cd){ b =>
-                  // TODO: can b.tpe ever be null? can't really use pt, see e.g. pos/t2683 or cps/match1.scala
-                  defaultLabel setInfo MethodType(Nil, if (b.tpe != null) b.tpe.deconst else pt)
-                  LabelDef(defaultLabel, Nil, b)
+                  // If `b` is synthesized in SwitchMaker (by `collapseGuardedCases` or by `defaultCase`)
+                  // it is not yet typed. In order to assign the correct type to the label, type the case body.
+                  // See scala/scala#10926, pos/t13060.scala.
+                  val b1 = if (b.tpe == null) typer.typed(b, pt) else b
+                  defaultLabel setInfo MethodType(Nil, b1.tpe.deconst)
+                  LabelDef(defaultLabel, Nil, b1)
                 } else cd
 
               val last = collapsed.last
@@ -497,7 +502,7 @@ trait MatchOptimization extends MatchTreeMaking with MatchApproximation {
     class RegularSwitchMaker(scrutSym: Symbol, matchFailGenOverride: Option[Tree => Tree], val unchecked: Boolean) extends SwitchMaker { import CODE._
       val switchableTpe = Set(ByteTpe, ShortTpe, IntTpe, CharTpe, StringTpe)
       val alternativesSupported = true
-      val canJump = true
+      val canJump = !inForceDesugar
 
       // Constant folding sets the type of a constant tree to `ConstantType(Constant(folded))`
       // The tree itself can be a literal, an ident, a selection, ...
@@ -534,7 +539,9 @@ trait MatchOptimization extends MatchTreeMaking with MatchApproximation {
       }
 
       def defaultSym: Symbol = scrutSym
-      def defaultBody: Tree  = { matchFailGenOverride map (gen => gen(REF(scrutSym))) getOrElse Throw(MatchErrorClass.tpe, REF(scrutSym)) }
+      def defaultBody: Tree  = matchFailGenOverride
+        .map(gen => gen(REF(scrutSym)))
+        .getOrElse(Throw(MatchErrorClass.tpe, REF(scrutSym)))
       def defaultCase(scrutSym: Symbol = defaultSym, guard: Tree = EmptyTree, body: Tree = defaultBody): CaseDef = { atPos(body.pos) {
         (DEFAULT IF guard) ==> body
       }}

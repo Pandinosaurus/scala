@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -103,7 +103,7 @@ trait EntityPage extends HtmlPage {
                             case _                       => Span(`class`= "separator")
                           }) :: Txt(" ") ::
                           A(`class`= mbr.kind, href=relativeLinkTo(mbr), title=memberToShortCommentTitleTag(mbr)) ::
-                          A(href=relativeLinkTo(mbr), title=memberToShortCommentTitleTag(mbr), elems= Txt(mbr.name)) :: NoElems
+                          A(href=relativeLinkTo(mbr), title=memberToShortCommentTitleTag(mbr), elems=Txt(mbr.name)) :: NoElems
                         )
 
                     // Get path from root
@@ -165,8 +165,8 @@ trait EntityPage extends HtmlPage {
         Div(id="textfilter", elems=
           Span(`class`= "input", elems=
             Input(autocapitalize="none", placeholder="Search", id="index-input", `type`="text", accesskey="/") ::
-            I(`class`= "clear material-icons", elems=Txt("\uE14C")) ::
-            I(id="search-icon", `class`= "material-icons", elems=Txt("\uE8B6"))
+            I(`class`= "clear svg-icon", elems=Raw(Icons.clear)) ::
+            I(id="search-icon", `class`= "svg-icon", elems=Raw(Icons.search))
           )
          ) :: NoElems
        )
@@ -234,11 +234,11 @@ trait EntityPage extends HtmlPage {
       else List(Div(id="mbrsel", elems=
         Div(`class`="toggle") ::
         Div(id="memberfilter", elems=
-          I(`class`="material-icons arrow", elems= Txt("\uE037")) ::
+          I(`class`="svg-icon arrow", elems= Raw(Icons.arrow)) ::
           Span(`class`="input", elems=
             Input(id="mbrsel-input", placeholder="Filter all members", `type`="text", accesskey="/")
           ) ::
-          I(`class`="clear material-icons", elems=Txt("\uE14C"))
+          I(`class`="clear svg-icon", elems=Raw(Icons.clear))
         ) ::
         Div(id="filterby", elems=
           Div(id="order", elems=
@@ -293,7 +293,7 @@ trait EntityPage extends HtmlPage {
                 List(
                   Li(`class`="public in", elems=Span(elems=Txt("Public"))),
                   Li(`class`="protected out", elems=Span(elems=Txt("Protected")))
-                ) ++ List(Li(`class`="private out", elems=Span(elems=Txt("Private")))).filter(_ => universe.settings.visibilityPrivate))
+                ) ++ List(Li(`class`="private out", elems=Span(elems=Txt("Private")))).filter(_ => universe.settings.visibilityPrivate.value))
           ))
         )
       ))
@@ -341,7 +341,7 @@ trait EntityPage extends HtmlPage {
     val postamble =
       List(Div(id = "tooltip"),
            if (Set("epfl", "EPFL").contains(tpl.universe.settings.docfooter.value))
-             Div(id = "footer", elems = Txt("Scala programming documentation. Copyright (c) 2002-2022 ") :: A(href = "https://www.epfl.ch", target = "_top", elems = Txt("EPFL")) :: Txt(" and ") :: A(href = "https://www.lightbend.com", target = "_top", elems = Txt("Lightbend")) :: Txt("."))
+             Div(id = "footer", elems = Txt("Scala programming documentation. Copyright (c) 2002-2026 ") :: A(href = "https://www.epfl.ch", target = "_top", elems = Txt("EPFL")) :: Txt(" and ") :: A(href = "https://akka.io", target = "_top", elems = Txt("Akka")) :: Txt("."))
            else
              Div(id = "footer", elems = Txt(tpl.universe.settings.docfooter.value)))
 
@@ -384,7 +384,7 @@ trait EntityPage extends HtmlPage {
       )
   }
 
-  def memberToCommentHtml(mbr: MemberEntity, inTpl: DocTemplateEntity, isSelf: Boolean): Elems = {
+  def memberToCommentHtml(mbr: MemberEntity, inTpl: DocTemplateEntity, isSelf: Boolean): Elems =
     mbr match {
       // comment of class itself
       case dte: DocTemplateEntity if isSelf =>
@@ -392,8 +392,11 @@ trait EntityPage extends HtmlPage {
       case _ =>
         // comment of non-class member or non-documented inner class
         val commentBody = memberToCommentBodyHtml(mbr, inTpl, isSelf = false)
-        if (commentBody.isEmpty)
+        if (commentBody.isEmpty) {
+          if (universe.settings.docRequired.value && mbr.visibility.isPublic && inTpl.visibility.isPublic && mbr.toString.startsWith("scala.collection") && mbr.isInstanceOf[Def])
+            docletReporter.error(scala.reflect.internal.util.NoPosition, s"Member $mbr is public but has no documentation")
           NoElems
+        }
         else {
           val shortComment = memberToShortCommentHtml(mbr, isSelf)
           val longComment = memberToUseCaseCommentHtml(mbr, isSelf) ++ memberToCommentBodyHtml(mbr, inTpl, isSelf)
@@ -405,7 +408,6 @@ trait EntityPage extends HtmlPage {
           shortComment ++ includedLongComment
         }
     }
-  }
 
   def memberToUseCaseCommentHtml(mbr: MemberEntity, isSelf: Boolean): Elems = {
     mbr match {
@@ -431,7 +433,7 @@ trait EntityPage extends HtmlPage {
       else Div(`class`="comment cmt", elems= commentToHtml(mbr.comment)) :: NoElems
 
     val authorComment =
-      if (! s.docAuthor || mbr.comment.isEmpty ||
+      if (!s.docAuthor.value || mbr.comment.isEmpty ||
         mbr.comment.isDefined && mbr.comment.get.authors.isEmpty) NoElems
       else Div(`class`= "comment cmt", elems=
         H(6, Txt(if (mbr.comment.get.authors.size > 1) "Authors:" else "Author:" )) ::
@@ -578,7 +580,7 @@ trait EntityPage extends HtmlPage {
         case nte: NonTemplateMemberEntity if nte.isUseCase =>
           Div(`class`= "full-signature-block toggleContainer", elems=
             Span(`class`= "toggle", elems=
-              I(`class`= "material-icons", elems=Txt("\uE037")) ::
+              I(`class`= "svg-icon", elems=Raw(Icons.arrow)) ::
               Txt("Full Signature") :: NoElems
             ) ::
             Div(`class`= "hiddenContent full-signature-usecase", elems= signature(nte.useCaseOf.get,isSelf = true))
@@ -685,10 +687,10 @@ trait EntityPage extends HtmlPage {
         val exceptions: Elems =
           orEmpty(comment.throws) {
             dt("Exceptions thrown") ::
-            Dd(elems= {
+            Dd(elems = {
               val exceptionsXml: List[Elems] =
-                for((name, body) <- comment.throws.toList.sortBy(_._1) ) yield
-                  Span(`class`= "cmt", elems= bodyToHtml(body)) :: NoElems
+                for ((name@_, body) <- comment.throws.toList.sortBy(_._1))
+                yield Span(`class` = "cmt", elems = bodyToHtml(body)) :: NoElems
               exceptionsXml.reduceLeft(_ ++ Txt("") ++ _)
             })
           }
@@ -696,8 +698,10 @@ trait EntityPage extends HtmlPage {
         val todo: Elems =
           orEmpty(comment.todo) {
             dt("To do") ::
-            Dd(elems= {
-              val todoXml: List[Elems] = for(todo <- comment.todo ) yield Span(`class`= "cmt", elems= bodyToHtml(todo)) :: NoElems
+            Dd(elems = {
+              val todoXml: List[Elems] =
+                for (todo <- comment.todo)
+                yield Span(`class` = "cmt", elems = bodyToHtml(todo)) :: NoElems
               todoXml.reduceLeft(_ ++ _)
             })
           }
@@ -756,8 +760,8 @@ trait EntityPage extends HtmlPage {
     }
 
     def diagramDiv(description: String, diagId: String)(diagramSvg: Elems): Elems =
-      Div(`class`= "toggleContainer block diagram-container", id=diagId+"-container", elems= List(
-        Span(`class`= "toggle diagram-link", elems= Txt(description)),
+      Div(`class`= "toggleContainer diagram-container", id=diagId+"-container", elems= List(
+        Div(`class`= "toggle block diagram-link", elems= Span(elems= Txt(description))),
         Div(`class`= "diagram hiddenContent", id= diagId, elems= diagramSvg))) :: NoElems
 
     def ifDiags(genDiag: DocTemplateEntity => Option[Diagram])(embedDiagSvg: Elems => Elems): Elems =
@@ -788,13 +792,13 @@ trait EntityPage extends HtmlPage {
       case PrivateInTemplate(None) =>
         Some(Txt("private"))
       case PrivateInTemplate(Some(owner)) =>
-        Some((Txt("private[") :: typeToHtml(owner, true)) :+ Txt("]"))
+        Some((Txt("private[") :: typeToHtml(owner, hasLinks = true)) :+ Txt("]"))
       case ProtectedInInstance() =>
         Some(Txt("protected[this]"))
       case ProtectedInTemplate(None) =>
         Some(Txt("protected"))
       case ProtectedInTemplate(Some(owner)) =>
-        Some((Txt("protected[") :: typeToHtml(owner, true)) :+ Txt("]"))
+        Some((Txt("protected[") :: typeToHtml(owner, hasLinks = true)) :+ Txt("]"))
       case Public() =>
         None
     }

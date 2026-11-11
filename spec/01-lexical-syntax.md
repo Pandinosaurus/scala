@@ -8,6 +8,11 @@ chapter: 1
 
 Scala source code consists of Unicode text.
 
+The nine [Bidirectional explicit formatting](https://www.unicode.org/reports/tr9/#Bidirectional_Character_Types)
+characters `\u202a - \u202e` and `\u2066 - \u2069` (inclusive) are forbidden 
+from appearing in source files. Note that they can be represented using 
+unicode escapes in string and character literals.
+
 The program text is tokenized as described in this chapter.
 See the last section for special support for XML literals,
 which are parsed in _XML mode_.
@@ -52,7 +57,7 @@ of operator characters.  Second, an identifier can start with an operator
 character followed by an arbitrary sequence of operator characters.
 The preceding two forms are called _plain_ identifiers.  Finally,
 an identifier may also be formed by an arbitrary string between
-back-quotes (host systems may impose some restrictions on which
+backquotes (host systems may impose some restrictions on which
 strings are legal for identifiers).  The identifier then is composed
 of all characters excluding the backquotes themselves.
 
@@ -64,6 +69,14 @@ big_bob++=`def`
 
 decomposes into the three identifiers `big_bob`, `++=`, and
 `def`.
+
+Although `/` is an `opchar`, the sequence of characters `//` or `/*`,
+which open a comment, must be enclosed in backquotes when used in an identifier.
+
+```scala
+def `://`(s: String): URI
+def `*/*`(d: Double): Double
+```
 
 The rules for pattern matching further distinguish between
 _variable identifiers_, which start with a lower case letter
@@ -331,10 +344,11 @@ Literal  ::=  [‘-’] integerLiteral
 ### Integer Literals
 
 ```ebnf
-integerLiteral  ::=  (decimalNumeral | hexNumeral)
+integerLiteral  ::=  (decimalNumeral | hexNumeral | binaryNumeral)
                        [‘L’ | ‘l’]
 decimalNumeral  ::=  digit {digit}
 hexNumeral      ::=  ‘0’ (‘x’ | ‘X’) hexDigit {hexDigit}
+binaryNumeral   ::=  ‘0’ (‘b’ | ‘B’) binaryDigit {binaryDigit}
 ```
 
 Values of type `Int` are all integer
@@ -506,7 +520,7 @@ interpolatedString     ::= alphaid ‘"’ {[‘\’] interpolatedStringPart | �
 interpolatedStringPart ::= printableChar \ (‘"’ | ‘$’ | ‘\’) | escape
 escape                 ::= ‘$$’
                          | ‘$"’
-                         | ‘$’ id
+                         | ‘$’ alphaid
                          | ‘$’ BlockExpr
 alphaid                ::= upper idrest
                          |  varid
@@ -533,9 +547,9 @@ in an interpolated string. A single ‘$’-sign can still be obtained by doubli
 character: ‘$$’. A single ‘"’-sign can be obtained by the sequence ‘\$"’.
 
 The simpler form consists of a ‘$’-sign followed by an identifier starting with 
-a letter and followed only by letters, digits, and underscore characters, 
-e.g `$id`. The simpler form is expanded by putting braces around the identifier, 
-e.g `$id` is equivalent to `${id}`. In the following, unless we explicitly state otherwise, 
+a letter and followed only by letters, digits, and underscore characters, e.g., `$id`.
+The simpler form is expanded by putting braces around the identifier,
+e.g., `$id` is equivalent to `${id}`. In the following, unless we explicitly state otherwise,
 we assume that this expansion has already been performed.
 
 The expanded expression is type checked normally. Usually, `StringContext` will resolve to 
@@ -561,6 +575,7 @@ The following character escape sequences are recognized in character and string 
 | `‘\‘ ‘n‘`     | `\u000a` | linefeed        |  `LF`  |
 | `‘\‘ ‘f‘`     | `\u000c` | form feed       |  `FF`  |
 | `‘\‘ ‘r‘`     | `\u000d` | carriage return |  `CR`  |
+| `‘\‘ ‘s‘`     | `\u0020` | space           |  ` `   |
 | `‘\‘ ‘"‘`     | `\u0022` | double quote    |  `"`   |
 | `‘\‘ ‘'‘`     | `\u0027` | single quote    |  `'`   |
 | `‘\‘ ‘\‘`     | `\u005c` | backslash       |  `\`   |

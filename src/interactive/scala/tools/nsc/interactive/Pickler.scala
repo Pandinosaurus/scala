@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,6 +14,7 @@ package scala.tools.nsc.interactive
 
 import Lexer._
 import java.io.Writer
+import scala.collection.AbstractIterator
 
 /** An abstract class for writing and reading Scala objects to and
  *  from a legible representation. The representation follows the following grammar:
@@ -105,32 +106,32 @@ object Pickler {
      *  @param   f the function to apply.
      */
     def map[U](f: T => U): Unpickled[U] = this match {
-      case UnpickleSuccess(x) => UnpickleSuccess(f(x))
-      case f: UnpickleFailure => f
+      case UnpickleSuccess(x)    => UnpickleSuccess(f(x))
+      case fail: UnpickleFailure => fail
     }
     /** Transforms success values to successes or failures using given function,
      *  leaves failures alone.
      *  @param   f the function to apply.
      */
     def flatMap[U](f: T => Unpickled[U]): Unpickled[U] = this match {
-      case UnpickleSuccess(x) => f(x)
-      case f: UnpickleFailure => f
+      case UnpickleSuccess(x)    => f(x)
+      case fail: UnpickleFailure => fail
     }
     /** Tries alternate expression if current result is a failure
      *  @param alt  the alternate expression to be tried in case of failure
      */
     def orElse[U >: T](alt: => Unpickled[U]): Unpickled[U] = this match {
       case UnpickleSuccess(x) => this
-      case f: UnpickleFailure => alt
+      case _: UnpickleFailure => alt
     }
 
     /** Transforms failures into thrown `MalformedInput` exceptions.
      *  @throws  Lexer.MalformedInput   if current result is a failure
      */
     def requireSuccess: UnpickleSuccess[T] = this match {
-      case s @ UnpickleSuccess(x) => s
+      case s @ UnpickleSuccess(_) => s
       case f: UnpickleFailure =>
-        throw new MalformedInput(f.rd, "Unrecoverable unpickle failure:\n"+f.errMsg)
+        throw new MalformedInput(f.rd, s"Unrecoverable unpickle failure:\n${f.errMsg}")
     }
   }
 
@@ -211,7 +212,7 @@ object Pickler {
 
   /** Same as `p ~ q`
    */
-  def seqPickler[T, U](p: Pickler[T], q: => Pickler[U]) = new Pickler[T ~ U] {
+  def seqPickler[T, U](p: Pickler[T], q: => Pickler[U]): Pickler[T ~ U] = new Pickler[T ~ U] {
     lazy val qq = q
     def pickle(wr: Writer, x: T ~ U) = {
       p.pickle(wr, x.fst)
@@ -225,7 +226,7 @@ object Pickler {
 
   /** Same as `p | q`
    */
-  def eitherPickler[T, U <: T, V <: T](p: CondPickler[U], q: => CondPickler[V]) =
+  def eitherPickler[T, U <: T, V <: T](p: CondPickler[U], q: => CondPickler[V]): CondPickler[T] =
     new CondPickler[T](x => p.canPickle(x) || q.canPickle(x)) {
       lazy val qq = q
       override def tryPickle(wr: Writer, x: Any): Boolean =
@@ -277,7 +278,7 @@ object Pickler {
         p.pickle(wr, x)
       }
     }
-    def unpickle(rd: Lexer): Unpickled[Iterator[T]] = UnpickleSuccess(new Iterator[T] {
+    def unpickle(rd: Lexer): Unpickled[Iterator[T]] = UnpickleSuccess(new AbstractIterator[T] {
       var first = true
       def hasNext = {
         val t = rd.token

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,8 +13,6 @@
 package scala.tools.partest.nest
 
 import scala.reflect.OptManifest
-import scala.tools.cmd.toArgs
-import scala.tools.nsc.io.Directory
 
 /** A general mechanism for defining how a command line argument
  *  (always a String) is transformed into an arbitrary type.  A few
@@ -30,6 +28,8 @@ abstract class FromString[+T](implicit m: OptManifest[T]) extends PartialFunctio
 }
 
 object FromString {
+  import scala.sys.process.Parser.tokenize
+  import scala.tools.nsc.io.Directory
   // We need this because we clash with the String => Path implicits.
   private def toDir(s: String)  = new Directory(new java.io.File(s))
 
@@ -53,7 +53,7 @@ object FromString {
    *  list "foo", "bar", "baz".
    */
   val ArgumentsFromString: FromString[List[String]] = new FromString[List[String]] {
-    def apply(s: String) = toArgs(s)
+    def apply(s: String) = tokenize(s)
   }
 
   /** Identity.
@@ -66,6 +66,6 @@ object FromString {
    */
   implicit val IntFromString: FromString[Int] = new FromString[Int] {
     override def isDefinedAt(s: String)   = s.toIntOption.isDefined
-    def apply(s: String)                  = s.toInt
+    def apply(s: String)                  = s.toIntOption.getOrElse(0)
   }
 }

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -95,7 +95,7 @@ trait Lifter extends ExprBuilder {
 
     // The definitions trees
     val symToTree: mutable.LinkedHashMap[Symbol, Tree] = defs.map {
-      case (k, v) => (k.symbol, k)
+      case (k, _) => (k.symbol, k)
     }
 
     // The direct references of each definition tree
@@ -182,7 +182,7 @@ trait Lifter extends ExprBuilder {
                 case NoSymbol    =>
                   sym.setName(currentTransformState.name.freshen(sym.name.toTypeName))
                   sym.setName(sym.name.toTypeName)
-                case classSymbol => // will be renamed by above.
+                case classSymbol@_ => // will be renamed by above.
               }
               treeCopy.ClassDef(cd, Modifiers(sym.flags), sym.name, tparams, impl)
             }

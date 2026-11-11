@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,6 +13,7 @@
 package scala.tools.nsc.fsc
 
 import java.math.BigInteger
+import java.nio.charset.StandardCharsets.UTF_8
 import java.security.SecureRandom
 
 import scala.annotation.tailrec
@@ -104,7 +105,7 @@ class CompileSocket extends CompileOutputCommon {
     if (portsDir.list.toList.exists(_.name == fixPort.toString)) fixPort else -1
   } else portsDir.list.toList match {
     case Nil      => -1
-    case x :: xs  => try x.name.toInt catch {
+    case x :: _  => try x.name.toInt catch {
       case e: Exception => x.delete() ; throw e
     }
   }
@@ -139,7 +140,7 @@ class CompileSocket extends CompileOutputCommon {
     val file = portFile(port)
     // 128 bits of delicious randomness, suitable for printing with println over a socket,
     // and storage in a file -- see getPassword
-    val secretDigits = new BigInteger(128, new SecureRandom()).toString.getBytes("UTF-8")
+    val secretDigits = new BigInteger(128, new SecureRandom()).toString.getBytes(UTF_8)
 
     try OwnerOnlyChmod.chmodFileAndWrite(file.jfile.toPath, secretDigits)
     catch chmodFailHandler(s"Cannot create file: ${file}")
@@ -160,8 +161,8 @@ class CompileSocket extends CompileOutputCommon {
 
     @tailrec
     def getsock(attempts: Int): Option[Socket] = attempts match {
-      case 0    => warn("Unable to establish connection to compilation daemon") ; None
-      case num  =>
+      case 0 => warn("Unable to establish connection to compilation daemon") ; None
+      case _ =>
         val port = if (create) getPort(vmArgs) else pollPort()
         if (port < 0) return None
 

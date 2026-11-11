@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -80,30 +80,31 @@ trait ReplGlobal extends Global {
       }
 
       override def transform(tree: Tree): Tree = super.transform(tree) match {
-        case tree @ Template(parents, self, body) if nme.isReplWrapperName(tree.symbol.name) =>
+        case tpl @ Template(_, _, body) if nme.isReplWrapperName(tpl.symbol.name) =>
           val unusedPrivates = newUnusedPrivates
-          unusedPrivates.traverse(tree)
+          unusedPrivates.traverse(tpl)
           val unusedSyms = unusedPrivates.unusedTerms.iterator.map(_.symbol)
           val unusedLineReadVals = unusedSyms.filter(sym => isLineReadVal(sym.name)).flatMap(sym => List(sym, sym.accessedOrSelf)).toSet
-          val (removedStats, retainedStats) = tree.body.partition (t => unusedLineReadVals(t.symbol))
-          if (removedStats.isEmpty) tree
+          val (removedStats, retainedStats) = body.partition(stat => unusedLineReadVals(stat.symbol))
+          if (removedStats.isEmpty) tpl
           else {
-            val decls = tree.symbol.info.decls
-            removedStats.foreach(tree => decls.unlink(tree.symbol))
-            deriveTemplate(tree)(_ => retainedStats)
+            val decls = tpl.symbol.info.decls
+            removedStats.foreach(stat => decls.unlink(stat.symbol))
+            deriveTemplate(tpl)(_ => retainedStats)
           }
-        case tree => tree
+        case transformed => transformed
       }
     }
   }
 
   override def optimizerClassPath(base: ClassPath): ClassPath = {
+    val base1 = super.optimizerClassPath(base)
     settings.outputDirs.getSingleOutput match {
-      case None => base
+      case None => base1
       case Some(out) =>
         // Make bytecode of previous lines available to the inliner
         val replOutClasspath = ClassPathFactory.newClassPath(settings.outputDirs.getSingleOutput.get, settings, closeableRegistry)
-        AggregateClassPath.createAggregate(platform.classPath, replOutClasspath)
+        AggregateClassPath.createAggregate(base1, replOutClasspath)
     }
   }
 

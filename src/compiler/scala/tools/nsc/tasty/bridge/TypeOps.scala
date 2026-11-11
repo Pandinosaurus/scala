@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -36,8 +36,11 @@ trait TypeOps { self: TastyUniverse =>
 
   /** `*:` erases to either TupleXXL or Product */
   @inline final def genTupleIsUnsupported[T](name: String)(implicit ctx: Context): T = unsupportedError(s"generic tuple type $name in ${boundsString(ctx.owner)}")
-  @inline final def bigFnIsUnsupported[T](tpeStr: String)(implicit ctx: Context): T = unsupportedError(s"function type with more than 22 parameters in ${boundsString(ctx.owner)}: $tpeStr")
-  @inline final def ctxFnIsUnsupported[T](tpeStr: String)(implicit ctx: Context): T = unsupportedError(s"context function type in ${boundsString(ctx.owner)}: $tpeStr")
+  @inline final def fnIsUnsupported[T](kind: String => String, tpeStr: String)(implicit ctx: Context): T = unsupportedError(s"${kind("function type")} in ${boundsString(ctx.owner)}: $tpeStr")
+  @inline final def bigFnIsUnsupported[T](tpeStr: String)(implicit ctx: Context): T = fnIsUnsupported(ft => s"$ft with more than 22 parameters", tpeStr)
+  @inline final def ctxFnIsUnsupported[T](tpeStr: String)(implicit ctx: Context): T = fnIsUnsupported(ft => s"context $ft", tpeStr)
+  @inline final def erasedFnIsUnsupported[T](tpeStr: String)(implicit ctx: Context): T = fnIsUnsupported(ft => s"erased $ft", tpeStr)
+  @inline final def erasedCtxFnIsUnsupported[T](tpeStr: String)(implicit ctx: Context): T = fnIsUnsupported(ft => s"erased context $ft", tpeStr)
   @inline final def unionIsUnsupported[T](implicit ctx: Context): T = unsupportedError(s"union in ${boundsString(ctx.owner)}")
   @inline final def matchTypeIsUnsupported[T](implicit ctx: Context): T = unsupportedError(s"match type in ${boundsString(ctx.owner)}")
   @inline final def erasedRefinementIsUnsupported[T](implicit ctx: Context): T = unsupportedError(s"erased modifier in refinement of ${ctx.owner}")
@@ -65,7 +68,7 @@ trait TypeOps { self: TastyUniverse =>
     }
   }
 
-  def showType(tpe: Type, wrap: Boolean = true): String = {
+  def showType(tpe: Type, wrap: Boolean = true)(implicit ctx: Context): String = {
     def prefixed(prefix: String)(op: => String) = {
       val raw = op
       if (wrap) s"""$prefix"$raw""""
@@ -142,6 +145,9 @@ trait TypeOps { self: TastyUniverse =>
     final val RepeatedAnnot: Symbol = u.definitions.RepeatedAnnotationClass
     final val TargetNameAnnotationClass: Symbol = u.definitions.TargetNameAnnotationClass
     final val StaticMethodAnnotationClass: Symbol = u.definitions.StaticMethodAnnotationClass
+    final val ExperimentalAnnotationClass: Symbol = u.definitions.ExperimentalAnnotationClass
+    final val AnnotationDefaultClass: Symbol = u.definitions.AnnotationDefaultClass
+    final val JavaAnnotationClass: Symbol = u.definitions.JavaAnnotationClass
 
     object PolyFunctionType {
 
@@ -157,9 +163,13 @@ trait TypeOps { self: TastyUniverse =>
     final val NoType: Type = u.NoType
     final val NoPrefix: Type = u.NoPrefix
 
-    def adjustParent(tp: Type): Type = {
+    final val ObjectTpe: Type = u.definitions.ObjectTpe
+    final val ObjectTpeJava: Type = u.definitions.ObjectTpeJava
+
+    def adjustParent(tp: Type)(implicit ctx: Context): Type = {
       val tpe = tp.dealias
-      if (tpe.typeSymbolDirect === u.definitions.ObjectClass) u.definitions.AnyRefTpe
+      if (ctx.isJava && (tpe eq ObjectTpeJava)) ObjectTpe
+      else if (tpe.typeSymbolDirect === u.definitions.ObjectClass) u.definitions.AnyRefTpe
       else tpe
     }
 
@@ -219,9 +229,9 @@ trait TypeOps { self: TastyUniverse =>
     def IntersectionType(tps: Type*): Type = u.intersectionType(tps.toList)
     def IntersectionType(tps: List[Type]): Type = u.intersectionType(tps)
 
-    def AnnotatedType(tpe: Type, annot: Tree): Type = tpe match {
-      case u.AnnotatedType(annots, tpe) => u.AnnotatedType(annots :+ mkAnnotation(annot), tpe)
-      case _                            => u.AnnotatedType(mkAnnotation(annot) :: Nil   , tpe)
+    def AnnotatedType(tpe: Type, annot: Tree)(implicit ctx: Context): Type = tpe match {
+      case u.AnnotatedType(annots, tpe) => u.AnnotatedType(annots :+ mkAnnotation(annot, tpe), tpe)
+      case _                            => u.AnnotatedType(mkAnnotation(annot, tpe) :: Nil   , tpe)
     }
 
     def SuperType(thisTpe: Type, superTpe: Type): Type = u.SuperType(thisTpe, superTpe)
@@ -258,12 +268,15 @@ trait TypeOps { self: TastyUniverse =>
 
     def AppliedType(tycon: Type, args: List[Type])(implicit ctx: Context): Type = {
 
-      def formatFnType(arrow: String, arity: Int, args: List[Type]): String = {
+      def formatFnType(arrow: String, isErased: Boolean, arity: Int, args: List[Type]): String = {
         val len = args.length
         assert(len == arity + 1) // tasty should be type checked already
         val res = args.last
         val params = args.init
-        val paramsBody = params.mkString(",")
+        val paramsBody = {
+          val body = params.mkString(",")
+          if (isErased) s"erased $body" else body
+        }
         val argList = if (len == 2) paramsBody else s"($paramsBody)"
         s"$argList $arrow $res"
       }
@@ -271,10 +284,32 @@ trait TypeOps { self: TastyUniverse =>
       def typeRefUncurried(tycon: Type, args: List[Type]): Type = tycon match {
         case tycon: u.TypeRef if tycon.typeArgs.nonEmpty =>
           unsupportedError(s"curried type application $tycon[${args.mkString(",")}]")
-        case ContextFunctionType(n) => ctxFnIsUnsupported(formatFnType("?=>", n, args))
-        case FunctionXXLType(n)     => bigFnIsUnsupported(formatFnType("=>", n, args))
+        case ContextFunctionType(n) => ctxFnIsUnsupported(formatFnType("?=>", isErased = false, n, args))
+        case ErasedContextFunctionType(n) => erasedCtxFnIsUnsupported(formatFnType("?=>", isErased = true, n, args))
+        case ErasedFunctionType(n) => erasedFnIsUnsupported(formatFnType("=>", isErased = true, n, args))
+        case FunctionXXLType(n)     => bigFnIsUnsupported(formatFnType("=>", isErased = false, n, args))
         case _ =>
-          u.appliedType(tycon, args)
+          if (ctx.isJava && tycon.typeSymbol === u.definitions.ArrayClass) {
+            val arg0 = args.head
+            val arg1 =
+              arg0 match {
+                case arg0: u.RefinedType if arg0.parents.exists(_ eq ObjectTpeJava) =>
+                  // TODO [tasty]: in theory we could add more Modes to context to
+                  // detect this situation and not perform the substitution ahead of time,
+                  // however this does not work with SHAREDtype which caches.
+                  val parents1 = arg0.parents.map(tpe =>
+                    if (tpe eq ObjectTpeJava) ObjectTpe else tpe
+                  )
+                  IntersectionType(parents1)
+                case _ =>
+                  arg0
+              }
+
+            val args1 = if (arg1 eq arg0) args else arg1 :: Nil
+            u.appliedType(tycon, args1)
+          } else {
+            u.appliedType(tycon, args)
+          }
       }
 
       if (args.exists(tpe => tpe.isInstanceOf[u.TypeBounds] | tpe.isInstanceOf[LambdaPolyType])) {
@@ -297,12 +332,22 @@ trait TypeOps { self: TastyUniverse =>
     def ParamRef(binder: Type, idx: Int): Type =
       binder.asInstanceOf[LambdaType].lambdaParams(idx).ref
 
-    def NamedType(prefix: Type, sym: Symbol): Type = {
-      if (sym.isType) {
+    def NamedType(prefix: Type, sym: Symbol)(implicit ctx: Context): Type = {
+      if (ctx.isJava && sym.isClass && sym.isJavaDefined) {
+        def processInner(tp: Type): Type = tp match {
+          case u.TypeRef(pre, sym, args) if !sym.isStatic => u.typeRef(processInner(pre.widen), sym, args)
+          case _ => tp
+        }
         prefix match {
-          case tp: u.ThisType if !sym.isTypeParameter => u.typeRef(prefix, sym, Nil)
-          case _:u.SingleType | _:u.RefinedType       => u.typeRef(prefix, sym, Nil)
-          case _                                      => u.appliedType(sym, Nil)
+          case _: u.TypeRef => processInner(u.typeRef(prefix, sym, Nil)) // e.g. prefix is `Foo[Int]`
+          case _            => processInner(sym.tpeHK) // ignore prefix otherwise
+        }
+      }
+      else if (sym.isType) {
+        prefix match {
+          case _: u.ThisType if !sym.isTypeParameter => u.typeRef(prefix, sym, Nil)
+          case _:u.SingleType | _:u.RefinedType      => u.typeRef(prefix, sym, Nil)
+          case _                                     => u.appliedType(sym, Nil)
         }
       }
       else { // is a term
@@ -322,26 +367,37 @@ trait TypeOps { self: TastyUniverse =>
 
       def doLookup = lookupTypeFrom(space)(prefix, name)
 
+      val preSym = prefix.typeSymbol
+
       // we escape some types in the scala package especially
-      if (prefix.typeSymbol === u.definitions.ScalaPackage) {
+      if (preSym === u.definitions.ScalaPackage) {
         name match {
           case TypeName(SimpleName(raw @ SyntheticScala3Type())) => raw match {
-            case tpnme.And                                              => AndTpe
-            case tpnme.Or                                               => unionIsUnsupported
-            case tpnme.ContextFunctionN(n) if (n.toInt > 0)             => ContextFunctionType(n.toInt)
-            case tpnme.FunctionN(n)        if (n.toInt > 22)            => FunctionXXLType(n.toInt)
-            case tpnme.TupleCons                                        => genTupleIsUnsupported("scala.*:")
-            case tpnme.Tuple               if !ctx.mode.is(ReadParents) => genTupleIsUnsupported("scala.Tuple")
-            case tpnme.AnyKind                                          => u.definitions.AnyTpe
-            case tpnme.Matchable                                        => u.definitions.AnyTpe
-            case _                                                      => doLookup
+            case tpnme.And                                                    => AndTpe
+            case tpnme.Or                                                     => unionIsUnsupported
+            case tpnme.ContextFunctionN(n)                                    => ContextFunctionType(n.toInt)
+            case tpnme.FunctionN(n)              if (n.toInt > 22)            => FunctionXXLType(n.toInt)
+            case tpnme.TupleCons                                              => genTupleIsUnsupported("scala.*:")
+            case tpnme.Tuple                     if !ctx.mode.is(ReadParents) => genTupleIsUnsupported("scala.Tuple")
+            case tpnme.AnyKind                                                => u.definitions.AnyTpe
+            case tpnme.Matchable                                              => u.definitions.AnyTpe
+            case tpnme.ErasedContextFunctionN(n) if n.toInt > 0               => ErasedContextFunctionType(n.toInt)
+            case tpnme.ErasedFunctionN(n)                                     => ErasedFunctionType(n.toInt)
+            case _                                                            => doLookup
           }
 
           case _ => doLookup
         }
       }
       else {
-        doLookup
+        if (ctx.isJava && preSym === u.definitions.JavaLangPackage) {
+          name match {
+            case TypeName(SimpleName(tpnme.Object)) => ObjectTpeJava // Object =:= scala.Any in Java.
+            case _                                  => doLookup
+          }
+        } else {
+          doLookup
+        }
       }
     }
 
@@ -401,7 +457,7 @@ trait TypeOps { self: TastyUniverse =>
      *  Do the same for by name types => From[T] and => To[T]
      */
     def translateParameterized(self: Type)(from: u.ClassSymbol, to: u.ClassSymbol, wildcardArg: Boolean): Type = self match {
-      case self @ u.NullaryMethodType(tp) =>
+      case u.NullaryMethodType(tp) =>
         u.NullaryMethodType(translateParameterized(tp)(from, to, wildcardArg = false))
       case _ =>
         if (self.typeSymbol.isSubClass(from)) {
@@ -482,9 +538,17 @@ trait TypeOps { self: TastyUniverse =>
   }
 
   /** A synthetic type `scala.&` which accepts two type arguments, representing an intersection type
-   * @see https://github.com/lampepfl/dotty/issues/7688
+   * @see https://github.com/scala/scala3/issues/7688
    */
   case object AndTpe extends Type
+
+  case class ErasedFunctionType(arity: Int) extends Type {
+    assert(arity > 0)
+  }
+
+  case class ErasedContextFunctionType(arity: Int) extends Type {
+    assert(arity > 0)
+  }
 
   case class ContextFunctionType(arity: Int) extends Type {
     assert(arity > 0)
@@ -495,7 +559,7 @@ trait TypeOps { self: TastyUniverse =>
   }
 
   private val SyntheticScala3Type =
-    raw"^(?:&|\||AnyKind|(?:Context)?Function\d+|\*:|Tuple|Matchable)$$".r
+    raw"^(?:&|\||AnyKind|(?:Erased)?(?:Context)?Function\d+|\*:|Tuple|Matchable)$$".r
 
   sealed abstract trait TastyRepr extends u.Type {
     def tflags: TastyFlagSet

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,7 +13,9 @@
 package scala.tools.nsc.tasty
 
 import scala.collection.mutable
-import scala.tools.tasty.{ErasedTypeRef, Signature, TastyFormat, TastyHeaderUnpickler, TastyName, TastyReader, TastyRefs}
+import scala.tools.tasty.{ErasedTypeRef, Signature, TastyName, TastyReader, TastyRefs}
+import scala.tools.tasty.{AttributeUnpickler, Attributes}
+import scala.tools.tasty.{TastyFormat, TastyHeaderUnpickler, TastyVersion, UnpicklerConfig}
 import TastyFormat.NameTags._
 import TastyRefs.NameRef
 import TastyName._
@@ -38,12 +40,23 @@ object TastyUnpickler {
 
     ctx.log(s"Unpickling $filename")
 
+    def enter(treeUnpickler: TreeUnpickler[tasty.type])(implicit ctx: Context): Unit = {
+      treeUnpickler.enterTopLevel(classRoot, objectRoot)
+    }
+
     val unpickler = new TastyUnpickler[tasty.type](new TastyReader(bytes))(tasty)
     unpickler.readHeader()
     unpickler.readNames()
     val Some(astReader) = unpickler.readSection(TastyFormat.ASTsSection): @unchecked
+
+    val attributes = unpickler
+      .readSection(TastyFormat.AttributesSection)
+      .map(AttributeUnpickler.attributes)
+      .getOrElse(Attributes.empty)
+
     val treeUnpickler = new TreeUnpickler[tasty.type](astReader, unpickler.nameAtRef)(tasty)
-    treeUnpickler.enterTopLevel(classRoot, objectRoot)
+    val ctx0 = if (attributes.isJava) ctx.addMode(TastyModes.ReadJava) else ctx
+    enter(treeUnpickler)(ctx0)
   }
 
   private final class Table[T] extends (NameRef => T) {
@@ -52,6 +65,59 @@ object TastyUnpickler {
     def apply(ref: NameRef): T = names(ref.index)
     def size: Int = names.size
   }
+
+  trait Scala2CompilerConfig extends UnpicklerConfig {
+
+    /** When Scala 3 is in an RC phase for a new minor version, we put here the TASTy of that Minor,
+     * otherwise it should be empty.
+     */
+    final val toolOverrides: List[TastyVersion] = List()
+
+    private def asScala3Compiler(version: TastyVersion): String =
+      if (version.major == 28) {
+        // scala 3.x.y series
+        if (version.experimental > 0)
+          // scenario here is someone using 3.4.0 to read 3.4.1-RC1-NIGHTLY, in this case, we should show 3.4 nightly.
+          s"the same nightly or snapshot Scala 3.${version.minor - 1} compiler"
+        else s"a Scala 3.${version.minor}.0 compiler or newer"
+      }
+      else if (version.experimental > 0) "the same Scala compiler" // unknown major version, just say same
+      else "a more recent Scala compiler" // unknown major version, just say later
+
+    /** The description of the upgraded scala compiler that can read the given TASTy version */
+    final def upgradeReaderHowTo(version: TastyVersion): String =
+      if (version.major == 28) {
+        // scala 3.x.y series
+        if (version.minor > toolVersion.minor)
+          // TASTy from 3.8 or newer is not supported
+          s"""migrate to Scala 3; the TASTy reader in Scala 2.13
+             |  only supports Scala 3 versions up to 3.${toolVersion.minor}. Alternatively, use a version of the library
+             |  that is compatible with 3.${toolVersion.minor} (or with Scala 2.13)""".stripMargin
+        else if (version.experimental > 0)
+          // scenario here is someone using 2.13.12 to read 3.4.1-RC1-NIGHTLY, in this case
+          // Scala 2.13 can not read it.
+          s"either use a stable version of the library, or try from the same Scala 3.x nightly or snapshot compiler"
+        else "use the latest Scala 2.13.x compiler" // happy path, they have stable TASTy, but this 2.13.x is too old.
+      }
+      else if (version.experimental > 0) "use the same Scala compiler" // unknown major version, just say same
+      else "use a more recent Scala compiler" // unknown major version, just say later
+
+    /** The description of the upgraded scala compiler that can produce the given TASTy version */
+    final def upgradedProducerTool(version: TastyVersion): String = asScala3Compiler(version)
+
+    final def recompileAdditionalInfo: String = """
+      |  Usually this means that the library dependency containing this file should be updated.""".stripMargin
+
+    final def upgradeAdditionalInfo(fileVersion: TastyVersion): String =
+      if (fileVersion.isExperimental && toolVersion.experimental == 0) {
+        """
+          |  Note that Scala 2.13.x is only configured to read stable TASTy.""".stripMargin
+      }
+      else ""
+  }
+
+  /** A config for the TASTy reader of a scala 2 compiler */
+  val scala2CompilerConfig: UnpicklerConfig = new Scala2CompilerConfig with UnpicklerConfig.DefaultTastyVersion {}
 }
 
 import TastyUnpickler._
@@ -134,7 +200,7 @@ private class TastyUnpickler[Tasty <: TastyUniverse](reader: TastyReader)(implic
     result
   }
 
-  def readHeader(): Unit = new TastyHeaderUnpickler(reader).readHeader()
+  def readHeader(): Unit = new TastyHeaderUnpickler(scala2CompilerConfig, reader).readHeader()
 
   def readNames()(implicit ctx: Context): Unit = {
     ctx.log(s"reading names:")

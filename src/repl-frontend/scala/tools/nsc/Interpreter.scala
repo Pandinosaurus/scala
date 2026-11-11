@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -115,6 +115,7 @@ class InterpreterLoop {
         }
 
         // for 2.8 compatibility
+        @annotation.unused
         final class Compat {
           def bindValue(id: String, value: Any) =
             interpreter.bind(id, value.asInstanceOf[AnyRef].getClass.getName, value)

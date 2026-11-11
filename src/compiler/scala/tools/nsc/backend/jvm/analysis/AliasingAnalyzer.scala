@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -15,6 +15,7 @@ package backend.jvm
 package analysis
 
 import scala.annotation.switch
+import scala.collection.AbstractIterator
 import scala.collection.mutable
 import scala.tools.asm.Opcodes
 import scala.tools.asm.tree._
@@ -423,7 +424,7 @@ class BasicAliasingAnalyzer(methodNode: MethodNode, classInternalName: InternalN
 /**
  * An iterator over Int (required to prevent boxing the result of next).
  */
-abstract class IntIterator extends Iterator[Int] {
+abstract class IntIterator extends AbstractIterator[Int] {
   def hasNext: Boolean
   def next(): Int
 }
@@ -462,7 +463,7 @@ class AliasSet(var set: Object /*SmallBitSet | Array[Long]*/, var size: Int) {
           bsAdd(this, value)
         }
     }
-    case bits: Array[Long] =>
+    case _: Array[Long] =>
       bsAdd(this, value)
   }
 
@@ -484,14 +485,14 @@ class AliasSet(var set: Object /*SmallBitSet | Array[Long]*/, var size: Int) {
         else if (value == s.c) {                       s.c = s.d; s.d = -1; size = 3 }
         else if (value == s.d) {                                  s.d = -1; size = 3 }
     }
-    case bits: Array[Long] =>
+    case _: Array[Long] =>
       bsRemove(this, value)
       if (this.size == 4)
         this.set = bsToSmall(this.set.asInstanceOf[Array[Long]])
   }
 
   override def clone(): AliasSet = {
-    val resSet = (set: @unchecked) match {
+    val resSet: Object = (set: @unchecked) match {
       case s: SmallBitSet => new SmallBitSet(s.a, s.b, s.c, s.d)
       case bits: Array[Long] => bits.clone()
     }

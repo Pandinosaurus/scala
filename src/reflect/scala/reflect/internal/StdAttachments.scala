@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -73,6 +73,13 @@ trait StdAttachments {
    */
   case object BackquotedIdentifierAttachment extends PlainAttachment
 
+  /** Indicates that a selection was postfix (on Select tree) */
+  case object PostfixAttachment extends PlainAttachment
+  /** Indicates that an application was infix (on Apply tree) */
+  case object InfixAttachment extends PlainAttachment
+  /** Indicates that an application to `()` was inserted by the compiler */
+  case object AutoApplicationAttachment extends PlainAttachment
+
   /** A pattern binding exempt from unused warning.
    *
    *  Its host `Ident` has been created from a pattern2 binding, `case x @ p`.
@@ -81,9 +88,18 @@ trait StdAttachments {
    */
   case object NoWarnAttachment extends PlainAttachment
 
+  /** A pattern binding that shadows a symbol in scope. Removed by refchecks.
+   */
+  case class PatShadowAttachment(shadowed: Symbol)
+
   /** Indicates that a `ValDef` was synthesized from a pattern definition, `val P(x)`.
    */
   case object PatVarDefAttachment extends PlainAttachment
+
+  /** Indicates that a definition was part of either a pattern or "sequence shorthand"
+   *  that introduced multiple definitions. All variables must be either `val` or `var`.
+   */
+  case object MultiDefAttachment extends PlainAttachment
 
   /** Identifies trees are either result or intermediate value of for loop desugaring.
    */
@@ -136,6 +152,47 @@ trait StdAttachments {
 
   case object InterpolatedString extends PlainAttachment
 
+  case object VirtualStringContext extends PlainAttachment
+
+  case object CaseApplyInheritAccess extends PlainAttachment
+
   // Use of _root_ is in correct leading position of selection
   case object RootSelection extends PlainAttachment
+
+  /** Marks a Typed tree with Unit tpt. */
+  case object TypedExpectingUnitAttachment extends PlainAttachment
+  def explicitlyUnit(tree: Tree): Boolean = tree.hasAttachment[TypedExpectingUnitAttachment.type]
+
+  /** For `val i = 42`, marks field as inferred so accessor (getter) can warn if implicit. */
+  case object FieldTypeInferred extends PlainAttachment
+
+  case class LookupAmbiguityWarning(msg: String, fix: String) extends PlainAttachment
+
+  /** Java sealed classes may be qualified with a permits clause specifying allowed subclasses. */
+  case class PermittedSubclasses(permits: List[Tree]) extends PlainAttachment
+
+  /** The classes permitted to extend a sealed Java class, used to compute its children: those named by its
+   *  `permits` clause or PermittedSubclasses attribute (`declared`), or else the classes of its compilation unit
+   *  (JLS 8.1.6). Resolved on first use, since doing so while completing the sealed class could cycle.
+   */
+  final class PermittedSubclassSymbols(permitted: => List[Symbol], val declared: Boolean) extends PlainAttachment {
+    lazy val symbols: List[Symbol] = permitted
+    private[reflect] var children: Set[Symbol] = null
+    private[reflect] var completing: Symbol = null
+  }
+
+  case class NamePos(pos: Position) extends PlainAttachment
+
+  /** Not a named arg in an application. Used for suspicious literal booleans. */
+  case object UnnamedArg extends PlainAttachment
+
+  /** Adapted under value discard at typer. */
+  case object DiscardedValue extends PlainAttachment
+  /** Discarded pure expression observed at refchecks. */
+  case object DiscardedExpr extends PlainAttachment
+  /** Anonymous parameter of `if (_)` may be inferred as Boolean. */
+  case object BooleanParameterType extends PlainAttachment
+
+  /** Force desugaring Match trees, don't emit switches. Attach to DefDef trees or their symbol. */
+  case object ForceMatchDesugar extends PlainAttachment
 }

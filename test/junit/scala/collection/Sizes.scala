@@ -1,18 +1,23 @@
 package scala.collection
 
 import org.junit._
+
 import scala.collection.mutable.ListBuffer
 import org.openjdk.jol.info.GraphLayout
 
-object Sizes {
-  def list: Int = 24
-  def listBuffer: Int = 32
+import scala.annotation.nowarn
+import scala.tools.testkit.AllocationTest.{objectSize, refArraySize}
 
-  def refArray(length:Int): Int = {
-    (16 + (length+1) * 4) /8 * 8
-  }
-  def wrappedRefArray(length:Int): Int = refArray(length) + 16
-  def wrappedRefArrayIterator: Int = 24
+object Sizes {
+  def obj: Int = objectSize(0)
+  def list: Int = objectSize(2 * 4)
+  def listBuffer: Int = objectSize(2 * 4 + 2 * 4 + 1)
+  def lazyList: Int = objectSize(2 * 4)
+  def streamCons: Int = objectSize(3 * 4)
+
+  def refArray(length: Int): Int = refArraySize(length)
+  def wrappedRefArray(length: Int): Int = refArray(length) + objectSize(4)
+  def wrappedRefArrayIterator: Int = objectSize(3 * 4)
 }
 
 class Sizes {
@@ -39,8 +44,29 @@ class Sizes {
   @Test
   def wrappedArray(): Unit = {
     val wrapped = Array[String]("")
-    assertTotalSize(16, JOL.netLayout(mutable.ArraySeq.make[String](wrapped), wrapped))
-    assertTotalSize(16, JOL.netLayout(immutable.ArraySeq.unsafeWrapArray[String](wrapped), wrapped))
+    assertTotalSize(objectSize(4), JOL.netLayout(mutable.ArraySeq.make[String](wrapped), wrapped))
+    assertTotalSize(objectSize(4), JOL.netLayout(immutable.ArraySeq.unsafeWrapArray[String](wrapped), wrapped))
+  }
+
+  @Test
+  def stream(): Unit = {
+    def next = new Object
+    @nowarn("cat=deprecation")
+    val st = Stream.continually(next).take(100)
+    locally(st.mkString) // force 100 elements
+    val l = JOL.netLayout(st)
+    // println(l.toFootprint)
+    assertTotalSize(100 * Sizes.obj + 100 * Sizes.streamCons + Sizes.obj, l) // the last one is Stream.Empty
+  }
+
+  @Test
+  def lazyList(): Unit = {
+    def next = new Object
+    val ll = LazyList.continually(next).take(100)
+    locally(ll.mkString) // force 100 elements
+    val l = JOL.netLayout(ll)
+    // println(l.toFootprint)
+    assertTotalSize(100 * Sizes.obj + 101 * Sizes.lazyList, l)
   }
 }
 

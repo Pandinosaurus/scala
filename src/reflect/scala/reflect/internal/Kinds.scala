@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -17,8 +17,8 @@ package internal
 import scala.annotation.nowarn
 import scala.reflect.internal.util.StringOps.{countAsString, countElementsAsString}
 
-trait Kinds {
-  self: SymbolTable =>
+final class Kinds[U <: SymbolTable with Singleton](val self: U) {
+  import self._
 
   import definitions._
 
@@ -295,7 +295,7 @@ trait Kinds {
           case 2 => "X"
           case 3 => "Y"
           case 4 => "Z"
-          case n if n < 12 => ('O'.toInt - 5 + n).toChar.toString
+          case x if x < 12 => ('O'.toInt - 5 + x).toChar.toString
           case _ => "V"
         }
     }
@@ -411,8 +411,8 @@ trait Kinds {
     abstract class InferKind {
       protected def infer(tpe: Type, owner: Symbol, topLevel: Boolean): Kind
       protected def infer(sym: Symbol, topLevel: Boolean): Kind = infer(sym.tpeHK, sym.owner, topLevel)
-      def apply(sym: Symbol): Kind = infer(sym, true)
-      def apply(tpe: Type, owner: Symbol): Kind = infer(tpe, owner, true)
+      def apply(sym: Symbol): Kind = infer(sym, topLevel = true)
+      def apply(tpe: Type, owner: Symbol): Kind = infer(tpe, owner, topLevel = true)
     }
 
     def apply(pre: Type): InferKind = new InferKind {
@@ -420,7 +420,7 @@ trait Kinds {
         val bounds = if (topLevel) TypeBounds.empty
                      else tpe.asSeenFrom(pre, owner).bounds
         if(!tpe.isHigherKinded) ProperTypeKind(bounds)
-        else TypeConKind(bounds, tpe.typeParams map { p => Argument(p.variance, infer(p, false))(p) })
+        else TypeConKind(bounds, tpe.typeParams map { p => Argument(p.variance, infer(p, topLevel = false))(p) })
       }
     }
   }

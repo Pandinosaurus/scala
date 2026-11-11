@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -23,6 +23,5 @@ trait GenPositions {
   // but I can hardly imagine when one would need a position that points to the reified code
   // usually reified trees are used to compose macro expansions or to be fed to the runtime compiler
   // however both macros and toolboxes have their own means to report errors in synthetic trees
-  def reifyPosition(pos: Position): Tree =
-    reifyMirrorObject(NoPosition)
+  def reifyPosition(pos: Position): Tree = reifyMirrorObject(NoPosition)
 }

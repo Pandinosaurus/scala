@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -16,9 +16,9 @@ package internal
 
 import util._
 
-trait TypeDebugging {
-  self: SymbolTable =>
+final class TypeDebugging[U <: SymbolTable with Singleton](val self: U) {
 
+  import self._
   import definitions._
 
   /** There's a whole lot of implementation detail which is nothing but noise when

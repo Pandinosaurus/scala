@@ -1,7 +1,7 @@
 package scala.reflect.quasiquotes
 
 import org.scalacheck._, Prop._, Gen._, Arbitrary._
-import scala.reflect.runtime.universe._, Flag._
+import scala.reflect.runtime.universe._
 
 object TermConstructionProps extends QuasiquoteProperties("term construction") {
   property("unquote single tree return tree itself") = forAll { (t: Tree) =>
@@ -232,13 +232,14 @@ object TermConstructionProps extends QuasiquoteProperties("term construction") {
     object O
     implicit val liftO = Liftable[O.type] { _ => q"foo; bar" }
     assertEqAst(q"f(..$O)", "f(foo, bar)")
-  }
+  }: @annotation.nowarn("cat=unused-locals")
+
 
   property("scala/bug#7275 c2") = test {
     object O
     implicit val liftO = Liftable[O.type] { _ => q"{ foo; bar }; { baz; bax }" }
     assertEqAst(q"f(...$O)", "f(foo, bar)(baz, bax)")
-  }
+  }: @annotation.nowarn("cat=unused-locals")
 
   property("scala/bug#7275 d") = test {
     val l = q"a; b" :: q"c; d" :: Nil

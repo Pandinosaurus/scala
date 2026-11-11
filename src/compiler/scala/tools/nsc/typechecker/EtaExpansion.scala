@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -21,10 +21,10 @@ import symtab.Flags._
  *
  *  @author  Martin Odersky
  */
-trait EtaExpansion { self: Analyzer =>
+trait EtaExpansion { self: AbstractAnalyzer =>
   import global._
 
-  /** Expand partial method application `p.f(es_1)...(es_n)`. Does not support dependent method types (yet).
+  /** Expand partial method application `p.f(es_1)...(es_n)`.
     *
     * We expand this to the following block, which evaluates
     * the target of the application and its supplied arguments if needed (they are not stable),

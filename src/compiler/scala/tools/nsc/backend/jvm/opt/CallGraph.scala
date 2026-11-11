@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -96,7 +96,7 @@ abstract class CallGraph {
   def removeCallsite(invocation: MethodInsnNode, methodNode: MethodNode): Option[Callsite] = {
     val methodCallsites = callsites(methodNode)
     val newCallsites = methodCallsites - invocation
-    if (newCallsites.isEmpty) callsites.remove(methodNode)
+    if (newCallsites.isEmpty) callsites.subtractOne(methodNode)
     else callsites(methodNode) = newCallsites
     methodCallsites.get(invocation)
   }
@@ -111,7 +111,7 @@ abstract class CallGraph {
   def removeClosureInstantiation(indy: InvokeDynamicInsnNode, methodNode: MethodNode): Option[ClosureInstantiation] = {
     val methodClosureInits = closureInstantiations(methodNode)
     val newClosureInits = methodClosureInits - indy
-    if (newClosureInits.isEmpty) closureInstantiations.remove(methodNode)
+    if (newClosureInits.isEmpty) closureInstantiations.subtractOne(methodNode)
     else closureInstantiations(methodNode) = newClosureInits
     methodClosureInits.get(indy)
   }
@@ -122,8 +122,8 @@ abstract class CallGraph {
   }
 
   def refresh(methodNode: MethodNode, definingClass: ClassBType): Unit = {
-    callsites.remove(methodNode)
-    closureInstantiations.remove(methodNode)
+    callsites.subtractOne(methodNode)
+    closureInstantiations.subtractOne(methodNode)
     // callsitePositions, inlineAnnotatedCallsites, noInlineAnnotatedCallsites, staticallyResolvedInvokespecial
     // are left unchanged. They contain individual instructions, the state for those remains valid in case
     // the inliner performs a rollback.
@@ -298,10 +298,14 @@ abstract class CallGraph {
   /**
    * Just a named tuple used as return type of `analyzeCallsite`.
    */
-  private case class CallsiteInfo(isStaticallyResolved: Boolean, sourceFilePath: Option[String],
-                                  annotatedInline: Boolean, annotatedNoInline: Boolean,
-                                  samParamTypes: IntMap[ClassBType],
-                                  warning: Option[CalleeInfoWarning])
+  private case class CallsiteInfo(
+    isStaticallyResolved: Boolean = false,
+    sourceFilePath: Option[String] = None,
+    annotatedInline: Boolean = false,
+    annotatedNoInline: Boolean = false,
+    samParamTypes: IntMap[ClassBType] = IntMap.empty,
+    warning: Option[CalleeInfoWarning],
+  )
 
   /**
    * Analyze a callsite and gather meta-data that can be used for inlining decisions.
@@ -357,12 +361,12 @@ abstract class CallGraph {
 
         case None =>
           val warning = MethodInlineInfoMissing(calleeDeclarationClassBType.internalName, calleeMethodNode.name, calleeMethodNode.desc, calleeDeclarationClassBType.info.orThrow.inlineInfo.warning)
-          CallsiteInfo(false, None, false, false, IntMap.empty, Some(warning))
+          CallsiteInfo(warning = Some(warning))
       }
     } catch {
       case Invalid(noInfo: NoClassBTypeInfo) =>
         val warning = MethodInlineInfoError(calleeDeclarationClassBType.internalName, calleeMethodNode.name, calleeMethodNode.desc, noInfo)
-        CallsiteInfo(false, None, false, false, IntMap.empty, Some(warning))
+        CallsiteInfo(warning = Some(warning))
     }
   }
 

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -26,7 +26,7 @@ import scala.runtime.AbstractFunction1
   *  @tparam A         the type of the elements contained in this tree set
   *  @param ordering   the implicit ordering used to compare objects of type `A`
   *
-  *  @see [[https://docs.scala-lang.org/overviews/collections/concrete-immutable-collection-classes.html#red-black-trees "Scala's Collection Library overview"]]
+  *  @see [[https://docs.scala-lang.org/overviews/collections-2.13/concrete-immutable-collection-classes.html#red-black-trees "Scala's Collection Library overview"]]
   *  section on `Red-Black Trees` for more information.
   *
   *  @define Coll `immutable.TreeSet`
@@ -48,7 +48,7 @@ final class TreeSet[A] private[immutable] (private[immutable] val tree: RB.Tree[
 
   def this()(implicit ordering: Ordering[A]) = this(null)(ordering)
 
-  override def sortedIterableFactory = TreeSet
+  override def sortedIterableFactory: TreeSet.type = TreeSet
 
   private[this] def newSetOrSelf(t: RB.Tree[A, Any]) = if(t eq tree) this else new TreeSet[A](t)
 
@@ -146,7 +146,7 @@ final class TreeSet[A] private[immutable] (private[immutable] val tree: RB.Tree[
   /** Checks if this set contains element `elem`.
     *
     *  @param  elem    the element to check for membership.
-    *  @return true, iff `elem` is contained in this set.
+    *  @return `true`, iff `elem` is contained in this set.
     */
   def contains(elem: A): Boolean = RB.contains(tree, elem)
 
@@ -250,11 +250,10 @@ object TreeSet extends SortedIterableFactory[TreeSet] {
           // The cast is needed to compile with Dotty:
           // Dotty doesn't infer that E =:= Int, since instantiation of covariant GADTs is unsound
         new TreeSet[E](tree)
+      case _ if it.knownSize == 0 =>
+        new TreeSet[E]
       case _ =>
-        var t: RB.Tree[E, Null] = null
-        val i = it.iterator
-        while (i.hasNext) t = RB.update(t, i.next(), null, overwrite = false)
-        new TreeSet[E](t)
+        (newBuilder[E] ++= it).result()
     }
 
   def newBuilder[A](implicit ordering: Ordering[A]): ReusableBuilder[A, TreeSet[A]] = new TreeSetBuilder[A]
@@ -278,9 +277,6 @@ object TreeSet extends SortedIterableFactory[TreeSet] {
         case ts: TreeSet[A] if ts.ordering == ordering =>
           if (tree eq null) tree = ts.tree
           else tree = RB.union(beforePublish(tree), ts.tree)(ordering)
-        case ts: TreeMap[A @unchecked, _] if ts.ordering == ordering =>
-          if (tree eq null) tree = ts.tree0
-          else tree = RB.union(beforePublish(tree), ts.tree0)(ordering)
         case _ =>
           super.addAll(xs)
       }

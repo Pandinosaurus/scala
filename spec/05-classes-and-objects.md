@@ -332,13 +332,13 @@ Furthermore, the following restrictions on modifiers apply to ´M´ and
 
 - ´M'´ must not be labeled `final`.
 - ´M´ must not be [`private`](#modifiers).
-- If ´M´ is labeled `private[´C´]` for some enclosing class or package ´C´,
-  then ´M'´ must be labeled `private[´C'´]` for some class or package ´C'´ where
-  ´C'´ equals ´C´ or ´C'´ is contained in ´C´.
-
-<!-- TODO: check whether this is accurate -->
 - If ´M´ is labeled `protected`, then ´M'´ must also be
   labeled `protected`.
+- If ´M´ is labeled `private[´C´]` (respectively `protected[´C´]`)
+  for some enclosing class or package ´C´,
+  then ´M'´ must be labeled `private[´C'´]` (or, respectively, `protected[´C'´]`)
+  for some class or package ´C'´ where
+  ´C'´ equals ´C´ or the companion of ´C´, or ´C'´ is contained in ´C´.
 - If ´M'´ is not an abstract member, then ´M´ must be labeled `override`.
   Furthermore, one of two possibilities must hold:
     - either ´M´ is defined in a subclass of the class where is ´M'´ is defined,
@@ -862,11 +862,11 @@ a `val` or `var` modifier. Hence, an accessor
 definition for the parameter is [generated](#class-definitions).
 
 A case class definition of `´c´[´\mathit{tps}\,´](´\mathit{ps}_1\,´)´\ldots´(´\mathit{ps}_n´)` with type
-parameters ´\mathit{tps}´ and value parameters ´\mathit{ps}´ implies
+parameters ´\mathit{tps}´ and value parameters ´\mathit{ps}´ with type ascriptions ´\mathit{pts}´ implies
 the definition of a companion object, which serves as an [extractor object](08-pattern-matching.html#extractor-patterns). It has the following shape:
 
 ```scala
-object ´c´ {
+object ´c´ extends Function´\mathit{n}\,´[´\mathit{pt}_1\,\ldots\,\mathit{pt}_n´\,´c´[´\mathit{tps}\,´]]{
   def apply[´\mathit{tps}\,´](´\mathit{ps}_1\,´)´\ldots´(´\mathit{ps}_n´): ´c´[´\mathit{tps}\,´] = new ´c´[´\mathit{Ts}\,´](´\mathit{xs}_1\,´)´\ldots´(´\mathit{xs}_n´)
   def unapply[´\mathit{tps}\,´](´x´: ´c´[´\mathit{tps}\,´]) =
     if (x eq null) scala.None
@@ -888,6 +888,8 @@ If the object ´c´ already has a [matching](#definition-matching)
 `apply` (or `unapply`) member, no new definition is added.
 The definition of `apply` is omitted if class ´c´ is `abstract`.
 
+It will not be modified to extend Function if the existing definition doesn't extend it.
+
 If the case class definition contains an empty value parameter list, the
 `unapply` method returns a `Boolean` instead of an `Option` type and
 is defined as follows:
@@ -900,9 +902,10 @@ The name of the `unapply` method is changed to `unapplySeq` if the first
 parameter section ´\mathit{ps}_1´ of ´c´ ends in a
 [repeated parameter](04-basic-declarations-and-definitions.html#repeated-parameters).
 
-A method named `copy` is implicitly added to every case class unless the
-class already has a member (directly defined or inherited) with that name, or the
-class has a repeated parameter. The method is defined as follows:
+A method named `copy` is implicitly added to every case class, unless the
+class already has a member with that name, whether directly defined or inherited.
+The `copy` method is also omitted if the class is abstract, or if the class has
+a repeated parameter. The method is defined as follows:
 
 ```scala
 def copy[´\mathit{tps}\,´](´\mathit{ps}'_1\,´)´\ldots´(´\mathit{ps}'_n´): ´c´[´\mathit{tps}\,´] = new ´c´[´\mathit{Ts}\,´](´\mathit{xs}_1\,´)´\ldots´(´\mathit{xs}_n´)

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -12,22 +12,26 @@
 
 package scala.tools.testkit
 
-import org.junit.Assert.{assertEquals, assertFalse, assertTrue}
+import org.junit.Assert.{assertEquals, assertNotEquals}
+import org.junit.Assert.{assertFalse, assertTrue}
+import org.junit.Assume.{assumeFalse, assumeTrue}
 
-import scala.reflect.ClassTag
-import scala.runtime.ScalaRunTime.stringOf
+import scala.annotation.nowarn
 import scala.collection.mutable
 import scala.concurrent.{Await, Awaitable}
-import scala.util.chaining._
+import scala.reflect.ClassTag
+import scala.runtime.BoxesRunTime
+import scala.runtime.ScalaRunTime.stringOf
 import scala.util.{Failure, Success, Try}
+import scala.util.Properties.isWin
+import scala.util.chaining._
 import scala.util.control.{ControlThrowable, NonFatal}
+import java.lang.ref.{Reference, ReferenceQueue, SoftReference}
+import java.lang.reflect.{Array => _, _}
 import java.time.Duration
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 import java.util.concurrent.atomic.AtomicReference
-import java.lang.ref._
-import java.lang.reflect.{Array => _, _}
 import java.util.IdentityHashMap
-import scala.annotation.nowarn
 
 /** This module contains additional higher-level assert statements
  *  that are ultimately based on junit.Assert primitives.
@@ -42,6 +46,20 @@ object AssertUtil {
 
   // junit fail is Unit
   def fail(message: String): Nothing = throw new AssertionError(message)
+
+  def noWin(message: String = "skipping test on Windows")(body: => Unit) = {
+    assumeFalse(message, isWin)
+    body
+  }
+
+  private val Bail = new ControlThrowable {}
+
+  def bail(): Nothing = throw Bail
+
+  // if the test bails out, communicate a violated assumption
+  def bailable(name: String)(test: => Unit): Unit =
+    try test
+    catch { case _: Bail.type => assumeTrue(s"$name skipped bail!", false) }
 
   private val printable = raw"\p{Print}".r
 
@@ -62,11 +80,22 @@ object AssertUtil {
   def assertEqualStrings(expected: String)(actual: String) =
     assert(expected == actual, s"Expected:\n${dump(expected)}\nActual:\n${dump(actual)}")
 
-  private final val timeout = 60 * 1000L                 // wait a minute
+  // assertEquals but use BoxesRunTime.equals
+  // let junit format a message on failure
+  def assertEqualsAny(expected: Any, actual: Any): Unit =
+    if (!BoxesRunTime.equals(expected, actual)) assertEquals(expected, actual)
+  // as a bonus, message is by-name, though retains junit parameter order
+  def assertEqualsAny(message: => String, expected: Any, actual: Any): Unit =
+    if (!BoxesRunTime.equals(expected, actual)) assertEquals(message, expected, actual)
+  def assertNotEqualsAny(expected: Any, actual: Any): Unit =
+    if (BoxesRunTime.equals(expected, actual)) assertNotEquals(expected, actual)
+  def assertNotEqualsAny(message: => String, expected: Any, actual: Any): Unit =
+    if (BoxesRunTime.equals(expected, actual)) assertNotEquals(message, expected, actual)
 
-  private implicit class `ref helper`[A](val r: Reference[A]) extends AnyVal {
-    def isEmpty: Boolean  = r.get == null
+  private implicit class `ref helper`[A <: AnyRef](val r: Reference[A]) extends AnyVal {
+    def isEmpty: Boolean  = r.get == null // r.refersTo(null) to avoid influencing collection
     def nonEmpty: Boolean = !isEmpty
+    def hasReferent(x: AnyRef): Boolean = r.get eq x
   }
   private implicit class `class helper`(val clazz: Class[_]) extends AnyVal {
     def allFields: List[Field] = {
@@ -102,6 +131,15 @@ object AssertUtil {
     case (result, duration) => f(duration) ; result
   }
 
+  /** Expect the exception is thrown by evaluating `body`.
+   */
+  def intercept[T <: Throwable: ClassTag](body: => Any): Unit = assertThrown[T](_ => true)(body)
+
+  /** Expect the exception thrown with exactly the given message.
+   */
+  def interceptMessage[T <: Throwable: ClassTag](expected: String)(body: => Any): Unit =
+    assertThrown[T](_.getMessage == expected)(body)
+
   /** Check that throwable T (or a subclass) was thrown during evaluation of `body`,
    *  and that its message satisfies the `checkMessage` predicate.
    *  Any other exception is propagated.
@@ -111,6 +149,9 @@ object AssertUtil {
 
   private val Unthrown = new ControlThrowable {}
 
+  /** Assert that the exception was thrown while evaluating `body`,
+   *  and that the exception instance satisfies the `checker` predicate.
+   */
   def assertThrown[T <: Throwable: ClassTag](checker: T => Boolean)(body: => Any): Unit =
     try {
       body
@@ -133,40 +174,67 @@ object AssertUtil {
 
   def assertFails[U](checkMessage: String => Boolean)(body: => U): Unit = assertThrows[AssertionError](body, checkMessage)
 
-  /** JUnit-style assertion for `IterableLike.sameElements`.
-   */
-  def assertSameElements[A, B >: A](expected: Iterable[A], actual: Iterable[B], message: String = ""): Unit =
-    if (!expected.iterator.sameElements(actual))
-      fail(
-        f"${ if (message.nonEmpty) s"$message " else "" }expected:<${ stringOf(expected) }> but was:<${ stringOf(actual) }>"
-      )
+  private def orEmpty(b: Boolean)(text: => String): String = if (b) text else ""
 
-  /** Convenient for testing iterators.
+  /** JUnit-style assertion for `Seq#sameElements`.
+   *  The `actual` is iterated twice if failure is reported.
    */
-  def assertSameElements[A, B >: A](expected: Iterable[A], actual: IterableOnce[B]): Unit =
-    assertSameElements(expected, actual.iterator.to(List), "")
+  def assertSameElements[A, B >: A](expected: Seq[A], actual: Iterable[B], message: String = ""): Unit =
+    if (!expected.sameElements(actual))
+      fail(f"${orEmpty(message.nonEmpty)(s"$message ")}expected:<${stringOf(expected)}> but was:<${stringOf(actual)}>")
+
+  /** Convenience for testing iterators and non-Seqs.
+   *  The `actual` is collected to a `List` for reporting errors.
+   */
+  def assertSameElements[A, B >: A](expected: Seq[A], actual: IterableOnce[B]): Unit =
+    assertSameElements(expected, actual.iterator.to(Iterable), message = "")
+
+  /** Convenience for testing iterators and non-Seqs.
+   *  The `expected` is collected to a `List` for reporting errors.
+   */
+  def assertSameElements[A, B >: A](expected: IterableOnce[A], actual: IterableOnce[B]): Unit =
+    assertSameElements(expected.iterator.to(Seq), actual)
+
+  /** Convenience for testing arrays. Avoids warning about implicit conversion to Seq.
+   */
+  def assertSameElements[A, B >: A](expected: Array[A], actual: Array[B]): Unit =
+    assertSameElements(expected, actual, message = "")
+
+  def assertSameElements[A, B >: A](expected: Array[A], actual: Array[B], message: String): Unit =
+    assertSameElements(expected.toIndexedSeq, actual.toIndexedSeq, message)
+
+  @nowarn("msg=This catches all Throwables")
+  private def safeString(x: AnyRef): String =
+    try String.valueOf(x)
+    catch (t: Throwable) => t.getMessage
 
   /** Value is not strongly reachable from roots after body is evaluated.
    */
   def assertNotReachable[A <: AnyRef](a: => A, roots: AnyRef*)(body: => Unit): Unit = {
-    val wkref = new WeakReference(a)
+    val refq = new ReferenceQueue[A]
+    val ref: Reference[A] = new SoftReference(a, refq)
     // fail if following strong references from root discovers referent. Quit if ref is empty.
     def assertNoRef(root: AnyRef): Unit = {
       val seen  = new IdentityHashMap[AnyRef, Unit]
       val stack = mutable.Stack.empty[AnyRef]
-      def loop(): Unit = if (wkref.nonEmpty && stack.nonEmpty) {
+      def loop(): Unit = if (ref.nonEmpty && stack.nonEmpty) {
         val o: AnyRef = stack.pop()
         if (o != null && !seen.containsKey(o)) {
           seen.put(o, ())
-          assertFalse(s"Root $root held reference $o", o eq wkref.get)
+          if (ref.hasReferent(o))
+            fail(s"Root ${safeString(root)} held reference ${safeString(o)}")
           o match {
             case a: Array[AnyRef] =>
-              a.foreach(e => if (!e.isInstanceOf[Reference[_]]) stack.push(e))
+              a.foreach(e => if (e != null && !e.isInstanceOf[Reference[_]]) stack.push(e))
             case _ =>
               for (f <- o.getClass.allFields)
                 if (!Modifier.isStatic(f.getModifiers) && !f.getType.isPrimitive && !classOf[Reference[_]].isAssignableFrom(f.getType))
                   stack.push(f.follow(o))
           }
+        }
+        refq.poll() match {
+          case null  =>
+          case r @ _ => fail("assertNotReachable dropped reference value")
         }
         loop()
       }
@@ -292,6 +360,23 @@ object AssertUtil {
   def readyOrNot(awaitable: Awaitable[_]): Boolean = Try(Await.ready(awaitable, TestDuration.Standard)).isSuccess
 
   def withoutATrace[A](body: => A) = NoTrace(body)
+
+  /** To be thrown by test code to check stack depth. */
+  case class Probe(depth: Int) extends ControlThrowable
+
+  /** To be called by test code to check stack depth from assertStackSafe. */
+  def probeStackSafety[A](): A = throw new Probe(Thread.currentThread.getStackTrace.length)
+
+  def assertStackSafe[A](run1: => A, run2: => A): Unit = {
+    var res1 = -1
+    var res2 = -1
+    def check(f: Int => Unit): Probe => Boolean = {
+      case Probe(depth) => f(depth); true
+    }
+    assertThrown[Probe](check(depth => res1 = depth))(run1)
+    assertThrown[Probe](check(depth => res2 = depth))(run2)
+    assertEquals(s"Expected equal stack depths, but got $res1 and $res2", res1, res2)
+  }
 }
 
 object TestDuration {

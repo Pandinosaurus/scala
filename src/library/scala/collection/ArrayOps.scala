@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -44,6 +44,7 @@ import scala.Predef.{ // unimport all array-related implicit conversions to avoi
   _
 }
 import scala.collection.Stepper.EfficientSplit
+import scala.collection.generic.CommonErrors
 import scala.collection.immutable.Range
 import scala.collection.mutable.ArrayBuilder
 import scala.math.Ordering
@@ -62,7 +63,7 @@ object ArrayOps {
   /** A lazy filtered array. No filtering is applied until one of `foreach`, `map` or `flatMap` is called. */
   class WithFilter[A](p: A => Boolean, xs: Array[A]) {
 
-    /** Apply `f` to each element for its side effects.
+    /** Applies `f` to each element for its side effects.
       * Note: [U] parameter needed to help scalac's type inference.
       */
     def foreach[U](f: A => U): Unit = {
@@ -125,11 +126,12 @@ object ArrayOps {
     private[this] val len = xs.length
     override def knownSize: Int = len - pos
     def hasNext: Boolean = pos < len
-    def next(): A = try {
+    def next(): A = {
+      if (pos >= xs.length) Iterator.empty.next()
       val r = xs(pos)
       pos += 1
       r
-    } catch { case _: ArrayIndexOutOfBoundsException => Iterator.empty.next() }
+    }
     override def drop(n: Int): Iterator[A] = {
       if (n > 0) {
         val newPos = pos + n
@@ -145,11 +147,12 @@ object ArrayOps {
   private final class ReverseIterator[@specialized(Specializable.Everything) A](xs: Array[A]) extends AbstractIterator[A] with Serializable {
     private[this] var pos = xs.length-1
     def hasNext: Boolean = pos >= 0
-    def next(): A = try {
+    def next(): A = {
+      if (pos < 0) Iterator.empty.next()
       val r = xs(pos)
       pos -= 1
       r
-    } catch { case _: ArrayIndexOutOfBoundsException => Iterator.empty.next() }
+    }
 
     override def drop(n: Int): Iterator[A] = {
       if (n > 0) pos = Math.max( -1, pos - n)
@@ -173,6 +176,9 @@ object ArrayOps {
     * an implementation that copies the data to a boxed representation for use with `Arrays.sort`.
     */
   private final val MaxStableSortLength = 300
+
+  /** Avoid an allocation in [[collect]]. */
+  private val fallback: Any => Any = _ => fallback
 }
 
 /** This class serves as a wrapper for `Array`s with many of the operations found in
@@ -224,14 +230,14 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
     *  @return  the first element of this array.
     *  @throws NoSuchElementException if the array is empty.
     */
-  def head: A = try xs.apply(0) catch { case _: ArrayIndexOutOfBoundsException => throw new NoSuchElementException("head of empty array") }
+  def head: A = if (nonEmpty) xs.apply(0) else throw new NoSuchElementException("head of empty array")
 
   /** Selects the last element.
     *
     * @return The last element of this array.
     * @throws NoSuchElementException If the array is empty.
     */
-  def last: A = try xs.apply(xs.length-1) catch { case _: ArrayIndexOutOfBoundsException => throw new NoSuchElementException("last of empty array") }
+  def last: A = if (nonEmpty) xs.apply(xs.length-1) else throw new NoSuchElementException("last of empty array")
 
   /** Optionally selects the first element.
     *
@@ -497,7 +503,7 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
     *  @tparam A2  the element type of the second resulting collection
     *  @param f    the 'split function' mapping the elements of this array to an [[scala.util.Either]]
     *
-    *  @return     a pair of arrays: the first one made of those values returned by `f` that were wrapped in [[scala.util.Left]], 
+    *  @return     a pair of arrays: the first one made of those values returned by `f` that were wrapped in [[scala.util.Left]],
     *              and the second one made of those wrapped in [[scala.util.Right]]. */
   def partitionMap[A1: ClassTag, A2: ClassTag](f: A => Either[A1, A2]): (Array[A1], Array[A2]) = {
     val res1 = ArrayBuilder.make[A1]
@@ -569,7 +575,7 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
     */
   def filterNot(p: A => Boolean): Array[A] = filter(x => !p(x))
 
-  /** Sorts this array according to an Ordering.
+  /** Sorts this array according to an `Ordering`.
     *
     *  The sort is stable. That is, elements that are equal (as determined by
     *  `lt`) appear in the same order in the sorted sequence as in the original.
@@ -584,7 +590,7 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
     val len = xs.length
     def boxed = if(len < ArrayOps.MaxStableSortLength) {
       val a = xs.clone()
-      Sorting.stableSort(a)(ord.asInstanceOf[Ordering[A]])
+      Sorting.stableSort(a)(using ord.asInstanceOf[Ordering[A]])
       a
     } else {
       val a = Array.copyAs[AnyRef](xs, len)(ClassTag.AnyRef)
@@ -756,20 +762,19 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
     true
   }
 
-  /** Applies a binary operator to a start value and all elements of this array,
-    * going left to right.
-    *
-    *  @param   z    the start value.
-    *  @param   op   the binary operator.
-    *  @tparam  B    the result type of the binary operator.
-    *  @return  the result of inserting `op` between consecutive elements of this array,
-    *           going left to right with the start value `z` on the left:
-    *           {{{
-    *             op(...op(z, x_1), x_2, ..., x_n)
-    *           }}}
-    *           where `x,,1,,, ..., x,,n,,` are the elements of this array.
-    *           Returns `z` if this array is empty.
-    */
+  /** Applies the given binary operator `op` to the given initial value `z` and
+   *  all elements of this array, going left to right. Returns the initial value
+   *  if this array is empty.
+   *
+   *  If `x,,1,,`, `x,,2,,`, ..., `x,,n,,` are the elements of this array, the
+   *  result is `op( op( ... op( op(z, x,,1,,), x,,2,,) ... ), x,,n,,)`.
+   *
+   *   @param    z       An initial value.
+   *   @param    op      A binary operator.
+   *   @tparam   B       The result type of the binary operator.
+   *   @return           The result of applying `op` to `z` and all elements of this array,
+   *                     going left to right. Returns `z` if this array is empty.
+   */
   def foldLeft[B](z: B)(op: (B, A) => B): B = {
     def f[@specialized(Specializable.Everything) T](xs: Array[T], op: (Any, Any) => Any, z: Any): Any = {
       val length = xs.length
@@ -862,20 +867,20 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
     res
   }
 
-  /** Applies a binary operator to all elements of this array and a start value,
-    * going right to left.
-    *
-    *  @param   z    the start value.
-    *  @param   op   the binary operator.
-    *  @tparam  B    the result type of the binary operator.
-    *  @return  the result of inserting `op` between consecutive elements of this array,
-    *           going right to left with the start value `z` on the right:
-    *           {{{
-    *             op(x_1, op(x_2, ... op(x_n, z)...))
-    *           }}}
-    *           where `x,,1,,, ..., x,,n,,` are the elements of this array.
-    *           Returns `z` if this array is empty.
-    */
+  /** Applies the given binary operator `op` to all elements of this array and
+   *  the given initial value `z`, going right to left. Returns the initial
+   *  value if this array is empty.
+   *
+   *  If `x,,1,,`, `x,,2,,`, ..., `x,,n,,` are the elements of this array, the
+   *  result is `op(x,,1,,, op(x,,2,,, op( ... op(x,,n,,, z) ... )))`.
+   *
+   *   @param    z       An initial value.
+   *   @param    op      A binary operator.
+   *   @tparam   B       The result type of the binary operator.
+   *   @return           The result of applying `op` to all elements of this array
+   *                     and `z`, going right to left. Returns `z` if this array
+   *                     is empty.
+   */
   def foldRight[B](z: B)(op: (A, B) => B): B = {
     def f[@specialized(Specializable.Everything) T](xs: Array[T], op: (Any, Any) => Any, z: Any): Any = {
       var v = z
@@ -902,15 +907,17 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
 
   }
 
-  /** Folds the elements of this array using the specified associative binary operator.
-    *
-    *  @tparam A1     a type parameter for the binary operator, a supertype of `A`.
-    *  @param z       a neutral element for the fold operation; may be added to the result
-    *                 an arbitrary number of times, and must not change the result (e.g., `Nil` for list concatenation,
-    *                 0 for addition, or 1 for multiplication).
-    *  @param op      a binary operator that must be associative.
-    *  @return        the result of applying the fold operator `op` between all the elements, or `z` if this array is empty.
-    */
+  /** Alias for [[foldLeft]].
+   *
+   *  The type parameter is more restrictive than for `foldLeft` to be
+   *  consistent with [[IterableOnceOps.fold]].
+   *
+   *   @tparam A1     The type parameter for the binary operator, a supertype of `A`.
+   *   @param z       An initial value.
+   *   @param op      A binary operator.
+   *   @return        The result of applying `op` to `z` and all elements of this array,
+   *                  going left to right. Returns `z` if this string is empty.
+   */
   def fold[A1 >: A](z: A1)(op: (A1, A1) => A1): A1 = foldLeft(z)(op)
 
   /** Builds a new array by applying a function to all elements of this array.
@@ -1010,18 +1017,13 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
     *                `pf` to each element on which it is defined and collecting the results.
     *                The order of the elements is preserved.
     */
-  def collect[B : ClassTag](pf: PartialFunction[A, B]): Array[B] = {
-    var i = 0
-    var matched = true
-    def d(x: A): B = {
-      matched = false
-      null.asInstanceOf[B]
-    }
+  def collect[B: ClassTag](pf: PartialFunction[A, B]): Array[B] = {
+    val fallback: Any => Any = ArrayOps.fallback
     val b = ArrayBuilder.make[B]
-    while(i < xs.length) {
-      matched = true
-      val v = pf.applyOrElse(xs(i), d)
-      if(matched) b += v
+    var i = 0
+    while (i < xs.length) {
+      val v = pf.applyOrElse(xs(i), fallback)
+      if (v.asInstanceOf[AnyRef] ne fallback) b.addOne(v.asInstanceOf[B])
       i += 1
     }
     b.result()
@@ -1029,17 +1031,12 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
 
   /** Finds the first element of the array for which the given partial function is defined, and applies the
     * partial function to it. */
-  def collectFirst[B](f: PartialFunction[A, B]): Option[B] = {
+  def collectFirst[B](@deprecatedName("f","2.13.9") pf: PartialFunction[A, B]): Option[B] = {
+    val fallback: Any => Any = ArrayOps.fallback
     var i = 0
-    var matched = true
-    def d(x: A): B = {
-      matched = false
-      null.asInstanceOf[B]
-    }
-    while(i < xs.length) {
-      matched = true
-      val v = f.applyOrElse(xs(i), d)
-      if(matched) return Some(v)
+    while (i < xs.length) {
+      val v = pf.applyOrElse(xs(i), fallback)
+      if (v.asInstanceOf[AnyRef] ne fallback) return Some(v.asInstanceOf[B])
       i += 1
     }
     None
@@ -1179,8 +1176,7 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
   /** A copy of this array with all elements of a collection appended. */
   def appendedAll[B >: A : ClassTag](suffix: IterableOnce[B]): Array[B] = {
     val b = ArrayBuilder.make[B]
-    val k = suffix.knownSize
-    if(k >= 0) b.sizeHint(k + xs.length)
+    b.sizeHint(suffix, delta = xs.length)
     b.addAll(xs)
     b.addAll(suffix)
     b.result()
@@ -1293,22 +1289,40 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
     (a1, a2, a3)
   }
 
-  /** Transposes a two dimensional array.
+  /** Transposes a two-dimensional array.
+    *
+    * Note: this method has known issues related to the handling of empty arrays. It will return an
+    * incorrectly typed empty array of runtime type `Array[A]` if it is called on an empty array,
+    * and if not handled with care may result in a [[java.lang.ClassCastException `ClassCastException`]].
+    * See [[https://github.com/scala/bug/issues/13178 scala/bug#13178]] for discussion.
+    *
+    * As a workaround, either convert to an iterable and use [[scala.collection.IterableOps!.transpose `IterableOps.transpose`]] instead,
+    * or call [[scala.collection.ArrayOps!.map `ArrayOps.map`]] beforehand instead of passing `asArray`.
     *
     *  @tparam B       Type of row elements.
-    *  @param asArray  A function that converts elements of this array to rows - arrays of type `B`.
-    *  @return         An array obtained by replacing elements of this arrays with rows the represent.
+    *  @param asArray  A function that converts elements of this array to rows — arrays of type `B`.
+    *  @return         An array obtained by replacing the elements of this array with the rows they represent and then transposing them.
     */
   def transpose[B](implicit asArray: A => Array[B]): Array[Array[B]] = {
-    val aClass = xs.getClass.getComponentType
-    val bb = new ArrayBuilder.ofRef[Array[B]]()(ClassTag[Array[B]](aClass))
-    if (xs.length == 0) bb.result()
-    else {
-      def mkRowBuilder() = ArrayBuilder.make[B](ClassTag[B](aClass.getComponentType))
-      val bs = new ArrayOps(asArray(xs(0))).map((x: B) => mkRowBuilder())
+    if (xs.length == 0) {
+      val aClass = xs.getClass.getComponentType
+      val bb = ArrayBuilder.make(using ClassTag[A](aClass))
+      bb.result().asInstanceOf[Array[Array[B]]] // cast may be invalid, see Scaladoc
+    } else {
+      val first = asArray(xs(0))
+      val bb = new ArrayBuilder.ofRef[Array[B]]()(ClassTag[Array[B]](first.getClass))
+      def mkRowBuilder() = ArrayBuilder.make[B](using ClassTag[B](first.getClass.getComponentType))
+      val bs = new ArrayOps(first).map((x: B) => mkRowBuilder())
+      var isFirst = true
       for (xs <- this) {
         var i = 0
-        for (x <- new ArrayOps(asArray(xs))) {
+        // prevent double-evaluation for backwards compatibility
+        val subArray = if (isFirst) {
+          isFirst = false
+          first
+        } else asArray(xs)
+
+        for (x <- new ArrayOps(subArray)) {
           bs(i) += x
           i += 1
         }
@@ -1318,7 +1332,7 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
     }
   }
 
-  /** Apply `f` to each element for its side effects.
+  /** Applies `f` to each element for its side effects.
     * Note: [U] parameter needed to help scalac's type inference.
     */
   def foreach[U](f: A => U): Unit = {
@@ -1480,10 +1494,11 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
     copied
   }
 
-  /** Create a copy of this array with the specified element type. */
+  /** Creates a copy of this array with the specified element type. */
   def toArray[B >: A: ClassTag]: Array[B] = {
     val destination = new Array[B](xs.length)
-    copyToArray(destination, 0)
+    @annotation.unused val copied = copyToArray(destination, 0)
+    //assert(copied == xs.length)
     destination
   }
 
@@ -1549,7 +1564,8 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
     *  @throws IndexOutOfBoundsException if `index` does not satisfy `0 <= index < length`.
     */
   def updated[B >: A : ClassTag](index: Int, elem: B): Array[B] = {
-    if(index < 0 || index >= xs.length) throw new IndexOutOfBoundsException(s"$index is out of bounds (min 0, max ${xs.length-1})")
+    if(index < 0 || index >= xs.length)
+      throw CommonErrors.indexOutOfBounds(index = index, max = xs.length-1)
     val dest = toArray[B]
     dest(index) = elem
     dest
@@ -1599,30 +1615,53 @@ final class ArrayOps[A](private val xs: Array[A]) extends AnyVal {
     */
   def sliding(size: Int, step: Int = 1): Iterator[Array[A]] = mutable.ArraySeq.make(xs).sliding(size, step).map(_.toArray[A])
 
-  /** Iterates over combinations.  A _combination_ of length `n` is a subsequence of
-    *  the original array, with the elements taken in order.  Thus, `Array("x", "y")` and `Array("y", "y")`
-    *  are both length-2 combinations of `Array("x", "y", "y")`, but `Array("y", "x")` is not.  If there is
-    *  more than one way to generate the same subsequence, only one will be returned.
-    *
-    *  For example, `Array("x", "y", "y", "y")` has three different ways to generate `Array("x", "y")` depending on
-    *  whether the first, second, or third `"y"` is selected.  However, since all are
-    *  identical, only one will be chosen.  Which of the three will be taken is an
-    *  implementation detail that is not defined.
-    *
-    *  @return   An Iterator which traverses the possible n-element combinations of this array.
-    *  @example  {{{
-    *  Array("a", "b", "b", "b", "c").combinations(2) == Iterator(Array(a, b), Array(a, c), Array(b, b), Array(b, c))
-    *  }}}
-    */
+  /** Iterates over combinations of elements.
+   *
+   *  A '''combination''' of length `n` is a sequence of `n` elements selected in order of their first index in this sequence.
+   *
+   *  For example, `"xyx"` has two combinations of length 2. The `x` is selected first: `"xx"`, `"xy"`.
+   *  The sequence `"yx"` is not returned as a combination because it is subsumed by `"xy"`.
+   *
+   *  If there is more than one way to generate the same combination, only one will be returned.
+   *
+   *  For example, the result `"xy"` arbitrarily selected one of the `x` elements.
+   *
+   *  As a further illustration, `"xyxx"` has three different ways to generate `"xy"` because there are three elements `x`
+   *  to choose from. Moreover, there are three unordered pairs `"xx"` but only one is returned.
+   *
+   *  It is not specified which of these equal combinations is returned. It is an implementation detail
+   *  that should not be relied on. For example, the combination `"xx"` does not necessarily contain
+   *  the first `x` in this sequence. This behavior is observable if the elements compare equal
+   *  but are not identical.
+   *
+   *  As a consequence, `"xyx".combinations(3).next()` is `"xxy"`: the combination does not reflect the order
+   *  of the original sequence, but the order in which elements were selected, by "first index";
+   *  the order of each `x` element is also arbitrary.
+   *
+   *  @return   An Iterator which traverses the n-element combinations of this array
+   *  @example {{{
+   *    Array('a', 'b', 'b', 'b', 'c').combinations(2).map(runtime.ScalaRunTime.stringOf).foreach(println)
+   *    // Array(a, b)
+   *    // Array(a, c)
+   *    // Array(b, b)
+   *    // Array(b, c)
+   *    Array('b', 'a', 'b').combinations(2).map(runtime.ScalaRunTime.stringOf).foreach(println)
+   *    // Array(b, b)
+   *    // Array(b, a)
+   *  }}}
+   */
   def combinations(n: Int): Iterator[Array[A]] = mutable.ArraySeq.make(xs).combinations(n).map(_.toArray[A])
 
-  /** Iterates over distinct permutations.
-    *
-    *  @return   An Iterator which traverses the distinct permutations of this array.
-    *  @example {{{
-    *  Array("a", "b", "b").permutations == Iterator(Array(a, b, b), Array(b, a, b), Array(b, b, a))
-    *  }}}
-    */
+  /** Iterates over distinct permutations of elements.
+   *
+   *  @return   An Iterator which traverses the distinct permutations of this array.
+   *  @example {{{
+   *    Array('a', 'b', 'b').permutations.map(runtime.ScalaRunTime.stringOf).foreach(println)
+   *    // Array(a, b, b)
+   *    // Array(b, a, b)
+   *    // Array(b, b, a)
+   *  }}}
+   */
   def permutations: Iterator[Array[A]] = mutable.ArraySeq.make(xs).permutations.map(_.toArray[A])
 
   // we have another overload here, so we need to duplicate this method

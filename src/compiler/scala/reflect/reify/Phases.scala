@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -37,7 +37,7 @@ trait Phases extends Reshape
     if (reifyDebug) println("[reshape phase]")
     tree = reshape.transform(tree)
     if (reifyDebug) println("[interlude]")
-    if (reifyDebug) println("reifee = " + (if (settings.Xshowtrees || settings.XshowtreesCompact || settings.XshowtreesStringified) "\n" + nodePrinters.nodeToString(tree).trim else tree.toString))
+    if (reifyDebug) println("reifee = " + (if (settings.Xshowtrees.value || settings.XshowtreesCompact.value || settings.XshowtreesStringified.value) "\n" + nodePrinters.nodeToString(tree).trim else tree.toString))
 
     if (reifyDebug) println("[calculate phase]")
     calculate.traverse(tree)

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,7 +14,7 @@ package scala
 package collection
 package mutable
 
-import scala.annotation.nowarn
+import scala.annotation.meta.companionClass
 import scala.collection.generic.DefaultSerializationProxy
 import scala.language.implicitConversions
 
@@ -41,6 +41,7 @@ import scala.language.implicitConversions
  *  rapidly as 2^30^ is approached.
  *
  */
+@(deprecated @companionClass)("Use `scala.collection.mutable.HashMap` instead for better performance.", since = "2.13.16")
 class AnyRefMap[K <: AnyRef, V] private[collection] (defaultEntry: K => V, initialBufferSize: Int, initBlank: Boolean)
   extends AbstractMap[K, V]
     with MapOps[K, V, Map, AnyRefMap[K, V]]
@@ -48,20 +49,20 @@ class AnyRefMap[K <: AnyRef, V] private[collection] (defaultEntry: K => V, initi
     with Serializable {
 
   import AnyRefMap._
-  def this() = this(AnyRefMap.exceptionDefault, 16, true)
+  def this() = this(AnyRefMap.exceptionDefault, 16, initBlank = true)
 
   /** Creates a new `AnyRefMap` that returns default values according to a supplied key-value mapping. */
-  def this(defaultEntry: K => V) = this(defaultEntry, 16, true)
+  def this(defaultEntry: K => V) = this(defaultEntry, 16, initBlank = true)
 
   /** Creates a new `AnyRefMap` with an initial buffer of specified size.
    *
    *  An `AnyRefMap` can typically contain half as many elements as its buffer size
    *  before it requires resizing.
    */
-  def this(initialBufferSize: Int) = this(AnyRefMap.exceptionDefault, initialBufferSize, true)
+  def this(initialBufferSize: Int) = this(AnyRefMap.exceptionDefault, initialBufferSize, initBlank = true)
 
   /** Creates a new `AnyRefMap` with specified default values and initial buffer size. */
-  def this(defaultEntry: K => V, initialBufferSize: Int) = this(defaultEntry, initialBufferSize, true)
+  def this(defaultEntry: K => V, initialBufferSize: Int) = this(defaultEntry, initialBufferSize, initBlank = true)
 
   private[this] var mask = 0
   private[this] var _size = 0
@@ -161,13 +162,17 @@ class AnyRefMap[K <: AnyRef, V] private[collection] (defaultEntry: K => V, initi
     val h = hashOf(key)
     var i = seekEntryOrOpen(h, key)
     if (i < 0) {
-      // It is possible that the default value computation was side-effecting
-      // Our hash table may have resized or even contain what we want now
-      // (but if it does, we'll replace it)
       val value = {
-        val oh = _hashes
+        val ohs = _hashes
+        val j = i & IndexMask
+        val oh = ohs(j)
         val ans = defaultValue
-        if (oh ne _hashes) {
+        // Evaluating `defaultValue` may change the map
+        //   - repack: the array is different
+        //   - element added at `j`: since `i < 0`, the key was missing and `oh` is either 0 or MinValue.
+        //     If `defaultValue` added an element at `j` then `_hashes(j)` must be different now.
+        //     (`hashOf` never returns 0 or MinValue.)
+        if (ohs.ne(_hashes) || oh != _hashes(j)) {
           i = seekEntryOrOpen(h, key)
           if (i >= 0) _size -= 1
         }
@@ -387,7 +392,7 @@ class AnyRefMap[K <: AnyRef, V] private[collection] (defaultEntry: K => V, initi
     val hz = java.util.Arrays.copyOf(_hashes, _hashes.length)
     val kz = java.util.Arrays.copyOf(_keys, _keys.length)
     val vz = java.util.Arrays.copyOf(_values,  _values.length)
-    val arm = new AnyRefMap[K, V](defaultEntry, 1, false)
+    val arm = new AnyRefMap[K, V](defaultEntry, 1, initBlank = false)
     arm.initializeTo(mask, _size, _vacant, hz, kz,  vz)
     arm
   }
@@ -436,7 +441,7 @@ class AnyRefMap[K <: AnyRef, V] private[collection] (defaultEntry: K => V, initi
    *  collection immediately.
    */
   def mapValuesNow[V1](f: V => V1): AnyRefMap[K, V1] = {
-    val arm = new AnyRefMap[K,V1](AnyRefMap.exceptionDefault,  1,  false)
+    val arm = new AnyRefMap[K,V1](AnyRefMap.exceptionDefault,  1,  initBlank = false)
     val hz = java.util.Arrays.copyOf(_hashes, _hashes.length)
     val kz = java.util.Arrays.copyOf(_keys, _keys.length)
     val vz = new Array[AnyRef](_values.length)
@@ -475,11 +480,30 @@ class AnyRefMap[K <: AnyRef, V] private[collection] (defaultEntry: K => V, initi
     this
   }
 
-  // The implicit dummy parameter is necessary to distinguish these methods from the base methods they overload (not override)
+  // The implicit dummy parameter is necessary to distinguish these methods from the base methods they overload (not override).
+  // Previously, in Scala 2, f took `K with AnyRef` scala/bug#11035
+  /**
+   * An overload of `map` which produces an `AnyRefMap`.
+   *
+   * @param f the mapping function must produce a key-value pair where the key is an `AnyRef`
+   * @param dummy an implicit placeholder for purposes of distinguishing the (erased) signature of this method
+   */
   def map[K2 <: AnyRef, V2](f: ((K, V)) => (K2, V2))(implicit dummy: DummyImplicit): AnyRefMap[K2, V2] =
     AnyRefMap.from(new View.Map(this, f))
+  /**
+   * An overload of `flatMap` which produces an `AnyRefMap`.
+   *
+   * @param f the mapping function must produce key-value pairs where the key is an `AnyRef`
+   * @param dummy an implicit placeholder for purposes of distinguishing the (erased) signature of this method
+   */
   def flatMap[K2 <: AnyRef, V2](f: ((K, V)) => IterableOnce[(K2, V2)])(implicit dummy: DummyImplicit): AnyRefMap[K2, V2] =
     AnyRefMap.from(new View.FlatMap(this, f))
+  /**
+   * An overload of `collect` which produces an `AnyRefMap`.
+   *
+   * @param pf the mapping function must produce a key-value pair where the key is an `AnyRef`
+   * @param dummy an implicit placeholder for purposes of distinguishing the (erased) signature of this method
+   */
   def collect[K2 <: AnyRef, V2](pf: PartialFunction[(K, V), (K2, V2)])(implicit dummy: DummyImplicit): AnyRefMap[K2, V2] =
     strictOptimizedCollect(AnyRefMap.newBuilder[K2, V2], pf)
 
@@ -494,10 +518,10 @@ class AnyRefMap[K <: AnyRef, V] private[collection] (defaultEntry: K => V, initi
 
   protected[this] def writeReplace(): AnyRef = new DefaultSerializationProxy(AnyRefMap.toFactory[K, V](AnyRefMap), this)
 
-  @nowarn("""cat=deprecation&origin=scala\.collection\.Iterable\.stringPrefix""")
   override protected[this] def stringPrefix = "AnyRefMap"
 }
 
+@deprecated("Use `scala.collection.mutable.HashMap` instead for better performance.", since = "2.13.16")
 object AnyRefMap {
   private final val IndexMask  = 0x3FFFFFFF
   private final val MissingBit = 0x80000000
@@ -592,8 +616,8 @@ object AnyRefMap {
 
   implicit def toBuildFrom[K <: AnyRef, V](factory: AnyRefMap.type): BuildFrom[Any, (K, V), AnyRefMap[K, V]] = ToBuildFrom.asInstanceOf[BuildFrom[Any, (K, V), AnyRefMap[K, V]]]
   private[this] object ToBuildFrom extends BuildFrom[Any, (AnyRef, AnyRef), AnyRefMap[AnyRef, AnyRef]] {
-    def fromSpecific(from: Any)(it: IterableOnce[(AnyRef, AnyRef)]) = AnyRefMap.from(it)
-    def newBuilder(from: Any) = AnyRefMap.newBuilder[AnyRef, AnyRef]
+    def fromSpecific(from: Any)(it: IterableOnce[(AnyRef, AnyRef)]): AnyRefMap[AnyRef, AnyRef] = AnyRefMap.from(it)
+    def newBuilder(from: Any): ReusableBuilder[(AnyRef, AnyRef), AnyRefMap[AnyRef, AnyRef]] = AnyRefMap.newBuilder[AnyRef, AnyRef]
   }
 
   implicit def iterableFactory[K <: AnyRef, V]: Factory[(K, V), AnyRefMap[K, V]] = toFactory[K, V](this)

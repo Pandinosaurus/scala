@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -42,7 +42,7 @@ object ClassPathMemoryConsumptionTester {
   private def doTest(args: Array[String]) = {
     val settings = loadSettings(args.toList)
 
-    val mains = (1 to settings.requiredInstances.value) map (_ => new MainRetainsGlobal)
+    val mains = (1 to settings.requiredInstances.value).map(_ => new MainRetainsGlobal)
 
     // we need original settings without additional params to be able to use them later
     val baseArgs = argsWithoutRequiredInstances(args)
@@ -50,7 +50,7 @@ object ClassPathMemoryConsumptionTester {
     println(s"Loading classpath ${settings.requiredInstances.value} times")
     val startTime = System.currentTimeMillis()
 
-    mains map (_.process(baseArgs))
+    mains.foreach(_.process(baseArgs))
 
     val elapsed = System.currentTimeMillis() - startTime
     println(s"Operation finished - elapsed $elapsed ms")

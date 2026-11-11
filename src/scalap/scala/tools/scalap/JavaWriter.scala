@@ -1,7 +1,7 @@
 /*
  * Scala classfile decoder (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -120,7 +120,7 @@ class JavaWriter(classfile: Classfile, writer: Writer) extends CodeWriter(writer
   def isConstr(name: String) = (name == "<init>")
 
   def printField(flags: Int, name: Int, tpe: Int, attribs: List[cf.Attribute]): Unit = {
-    print(flagsToStr(false, flags))
+    print(flagsToStr(clazz = false, flags))
     if ((flags & 0x0010) != 0)
       print("val " + NameTransformer.decode(getName(name)))
     else
@@ -130,7 +130,7 @@ class JavaWriter(classfile: Classfile, writer: Writer) extends CodeWriter(writer
 
   def printMethod(flags: Int, name: Int, tpe: Int, attribs: List[cf.Attribute]): Unit = {
     if (getName(name) == "<init>")
-    print(flagsToStr(false, flags))
+    print(flagsToStr(clazz = false, flags))
     if (getName(name) == "<init>") {
       print("def this" + getType(tpe) + ";").newline
     }
@@ -171,7 +171,7 @@ class JavaWriter(classfile: Classfile, writer: Writer) extends CodeWriter(writer
     val pck = getPackage(cf.classname)
     if (pck.length() > 0)
       println("package " + pck + ";")
-    print(flagsToStr(true, cf.flags))
+    print(flagsToStr(clazz = true, cf.flags))
     cf.attribs find {
       case cf.Attribute(name, _) => getName(name) == "JacoMeta"
     } match {

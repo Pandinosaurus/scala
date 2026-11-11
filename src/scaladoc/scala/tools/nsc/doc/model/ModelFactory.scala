@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -18,13 +18,16 @@ package model
 import base.comment._
 import diagram._
 
-import scala.collection._
-import scala.util.matching.Regex
-import scala.reflect.macros.internal.macroImpl
-import symtab.Flags
+import java.net.URI
+import java.nio.file.Paths
 
-import io._
-import model.{ RootPackage => RootPackageEntity }
+import scala.collection.mutable, mutable.ListBuffer
+import scala.reflect.io._
+import scala.reflect.macros.internal.macroImpl
+import scala.util.matching.Regex.quoteReplacement
+
+import model.{RootPackage => RootPackageEntity}
+import symtab.Flags
 
 /** This trait extracts all required information for documentation from compilation units */
 class ModelFactory(val global: Global, val settings: doc.Settings) {
@@ -156,7 +159,7 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
       }
     }
     def flags = {
-      val fgs = mutable.ListBuffer.empty[Paragraph]
+      val fgs = ListBuffer.empty[Paragraph]
       if (sym.isImplicit) fgs += Paragraph(Text("implicit"))
       if (sym.isSealed) fgs += Paragraph(Text("sealed"))
       if (!sym.isTrait && (sym hasFlag Flags.ABSTRACT)) fgs += Paragraph(Text("abstract"))
@@ -295,7 +298,7 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
     assert(!(docTemplatesCache isDefinedAt sym), sym)
     docTemplatesCache += (sym -> this)
 
-    if (settings.verbose)
+    if (settings.verbose.value)
       inform("Creating doc template for " + sym)
 
     override def linkTarget: DocTemplateImpl = this
@@ -312,26 +315,25 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
     }
 
     def sourceUrl = {
-      def fixPath(s: String) = s.replaceAll("\\" + java.io.File.separator, "/")
-      val assumedSourceRoot  = fixPath(settings.sourcepath.value) stripSuffix "/"
 
       if (!settings.docsourceurl.isDefault)
-        inSource map { case (file, line) =>
-          val filePathExt = fixPath(file.path).replaceFirst("^" + assumedSourceRoot, "")
-          val (filePath, fileExt) = filePathExt.splitAt(filePathExt.indexOf(".", filePathExt.lastIndexOf("/")))
+        inSource.map { case (file, line) =>
+          val filePathExt = {
+            // file path is relative to source root (-sourcepath); use an absolute path otherwise
+            val sp = settings.sourcepath.value
+            val fileUri = file.file.toPath.toUri
+            if (sp.isEmpty) fileUri.getRawPath
+            else Paths.get(sp).toUri.relativize(fileUri).getRawPath
+          }
+          val (filePath, fileExt) =
+            filePathExt.lastIndexOf('.') match {
+              case -1 => (filePathExt, "")
+              case i  => filePathExt.splitAt(i)
+            }
           val tplOwner = this.inTemplate.qualifiedName
           val tplName = this.name
-          val patches = new Regex("""€\{(FILE_PATH|FILE_EXT|FILE_PATH_EXT|FILE_LINE|TPL_OWNER|TPL_NAME)\}""")
-          def substitute(name: String): String = name match {
-            case "FILE_PATH" => filePath
-            case "FILE_EXT" => fileExt
-            case "FILE_PATH_EXT" => filePathExt
-            case "FILE_LINE" => line.toString
-            case "TPL_OWNER" => tplOwner
-            case "TPL_NAME" => tplName
-          }
-          val patchedString = patches.replaceAllIn(settings.docsourceurl.value, m => java.util.regex.Matcher.quoteReplacement(substitute(m.group(1))) )
-          new java.net.URL(patchedString)
+          val patchedString = expandUrl(settings.docsourceurl.value, filePath, fileExt, filePathExt, line, tplOwner, tplName)
+          new URI(patchedString).toURL
         }
       else None
     }
@@ -343,7 +345,7 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
     /* Subclass cache */
     private lazy val subClassesCache = (
       if (sym == AnyRefClass || sym == AnyClass) null
-      else mutable.ListBuffer[DocTemplateEntity]()
+      else ListBuffer[DocTemplateEntity]()
     )
     def registerSubClass(sc: DocTemplateEntity): Unit = {
       if (subClassesCache != null)
@@ -352,10 +354,10 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
     def directSubClasses = if (subClassesCache == null) Nil else subClassesCache.toList
 
     /* Implicitly convertible class cache */
-    private var implicitlyConvertibleClassesCache: mutable.ListBuffer[(DocTemplateImpl, ImplicitConversionImpl)] = null
+    private var implicitlyConvertibleClassesCache: ListBuffer[(DocTemplateImpl, ImplicitConversionImpl)] = null
     def registerImplicitlyConvertibleClass(dtpl: DocTemplateImpl, conv: ImplicitConversionImpl): Unit = {
       if (implicitlyConvertibleClassesCache == null)
-        implicitlyConvertibleClassesCache = mutable.ListBuffer[(DocTemplateImpl, ImplicitConversionImpl)]()
+        implicitlyConvertibleClassesCache = ListBuffer[(DocTemplateImpl, ImplicitConversionImpl)]()
       implicitlyConvertibleClassesCache += ((dtpl, conv))
     }
 
@@ -367,7 +369,7 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
 
     // the implicit conversions are generated lazily, on completeModel
     lazy val conversions: List[ImplicitConversionImpl] =
-      if (settings.docImplicits) makeImplicitConversions(sym, this) else Nil
+      if (settings.docImplicits.value) makeImplicitConversions(sym, this) else Nil
 
     // members as given by the compiler
     lazy val memberSyms      = sym.info.members.filter(s => membersShouldDocument(s, this)).toList
@@ -749,10 +751,11 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
         docTemplatesCache(bSym)
       else
         docTemplatesCache.get(bSym.owner) match {
-          case Some(inTpl) =>
-            val mbrs = inTpl.members.collect({ case mbr: MemberImpl if mbr.sym == bSym => mbr })
-            assert(mbrs.length == 1, "must have exactly one member with bSym")
-            mbrs.head
+          case Some(docTpl) =>
+            docTpl.members.collect { case mbr: MemberImpl if mbr.sym == bSym => mbr } match {
+              case h :: Nil => h
+              case _ => throw new AssertionError("must have exactly one member with bSym")
+            }
           case _ =>
             // move the class completely to the new location
             createNoDocMemberTemplate(bSym, inTpl)
@@ -811,7 +814,7 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
     if (!localShouldDocument(aSym) || aSym.isModuleClass || aSym.isPackageObject || aSym.isMixinConstructor)
       Nil
     else {
-      val allSyms = useCases(aSym, inTpl.sym) map { case (bSym, bComment, bPos) =>
+      val allSyms = docCommentsSupport.useCases(aSym, inTpl.sym) map { case (bSym, bComment, bPos) =>
         docComments.put(bSym, DocComment(bComment, bPos)) // put the comment in the list, don't parse it yet, closes scala/bug#4898
         bSym
       }
@@ -927,7 +930,7 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
         }
         else None
       def resultType =
-        makeTypeInTemplateContext(aSym.tpe, inTpl, aSym)
+        makeTypeInTemplateContext(aSym.tpe, this.inTpl, aSym)
       def isImplicit = aSym.isImplicit
     }
 
@@ -959,14 +962,12 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
        *   - a NoDocTemplate if the type's symbol is not documented at all */
       def makeTemplateOrMemberTemplate(parent: Type): TemplateImpl = {
         def noDocTemplate = makeTemplate(parent.typeSymbol)
-        findTemplateMaybe(parent.typeSymbol) match {
-          case Some(tpl) => tpl
-          case None => parent match {
+        findTemplateMaybe(parent.typeSymbol).getOrElse {
+          parent match {
             case TypeRef(pre, sym, args) =>
-              findTemplateMaybe(pre.typeSymbol) match {
-                case Some(tpl) => findMember(parent.typeSymbol, tpl).collect({case t: TemplateImpl => t}).getOrElse(noDocTemplate)
-                case None => noDocTemplate
-              }
+              findTemplateMaybe(pre.typeSymbol)
+                .flatMap(findMember(parent.typeSymbol, _).collect { case t: TemplateImpl => t })
+                .getOrElse(noDocTemplate)
             case _ => noDocTemplate
           }
         }
@@ -1041,9 +1042,9 @@ class ModelFactory(val global: Global, val settings: doc.Settings) {
 
   // whether or not to create a page for an {abstract,alias} type
   def typeShouldDocument(bSym: Symbol, inTpl: DocTemplateImpl) =
-    (settings.docExpandAllTypes && (bSym.sourceFile != null)) ||
+    (settings.docExpandAllTypes.value && (bSym.sourceFile != null)) ||
     (bSym.isAliasType || bSym.isAbstractType) &&
-    { val rawComment = global.expandedDocComment(bSym, inTpl.sym)
+    { val rawComment = global.docCommentsSupport.expandedDocComment(bSym, inTpl.sym)
       rawComment.contains("@template") || rawComment.contains("@documentable") }
 }
 object ModelFactory {
@@ -1052,4 +1053,36 @@ object ModelFactory {
   val defaultGroupName = "Ungrouped"
   val defaultGroupDesc = None
   val defaultGroupPriority = 1000
+
+  val tokens = raw"€\{($FILE_PATH|$FILE_EXT|$FILE_PATH_EXT|$FILE_LINE|$TPL_OWNER|$TPL_NAME)\}".r
+  final val FILE_PATH     = "FILE_PATH"
+  final val FILE_EXT      = "FILE_EXT"
+  final val FILE_PATH_EXT = "FILE_PATH_EXT"
+  final val FILE_LINE     = "FILE_LINE"
+  final val TPL_OWNER     = "TPL_OWNER"
+  final val TPL_NAME      = "TPL_NAME"
+
+  val WordChar = raw"(\w)".r
+
+  def expandUrl(urlTemplate: String, filePath: String, fileExt: String, filePathExt: String, line: Int, tplOwner: String, tplName: String): String = {
+    val absolute = filePath.startsWith("/")
+
+    def subst(token: String, index: Int): String = {
+      // If a relative path follows a word character, insert a `/`
+      def sep: String =
+        if (index > 0 && !absolute && WordChar.matches(urlTemplate.substring(index-1, index))) "/"
+        else ""
+      def dotted: Boolean = index > 0 && urlTemplate(index-1) == '.'
+
+      token match {
+        case FILE_PATH     => s"$sep$filePath"
+        case FILE_EXT      => if (dotted) fileExt.stripPrefix(".") else fileExt
+        case FILE_PATH_EXT => s"$sep$filePathExt"
+        case FILE_LINE     => line.toString
+        case TPL_OWNER     => tplOwner
+        case TPL_NAME      => tplName
+      }
+    }
+    tokens.replaceAllIn(urlTemplate, m => quoteReplacement(subst(m.group(1), m.start)))
+  }
 }

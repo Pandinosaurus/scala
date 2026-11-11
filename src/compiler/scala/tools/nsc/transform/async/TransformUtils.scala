@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -24,7 +24,8 @@ private[async] trait TransformUtils extends AsyncTransformStates {
   private[async] val asyncNames: AsyncNames[global.type]
 
   def typedPos(pos: Position)(tree: Tree): Tree = currentTransformState.localTyper.typedPos(pos)(tree: Tree)
-  def typed(tree: Tree): Tree = typedPos(currentTransformState.currentPos)(tree)
+  def typedCurrentPos(tree: Tree): Tree = typedPos(currentTransformState.currentPos)(tree)
+  def typedBasePos(tree: Tree): Tree = typedPos(currentTransformState.applySym.pos)(tree)
 
   lazy val IllegalStateExceptionClass: Symbol = rootMirror.staticClass("java.lang.IllegalStateException")
   lazy val IllegalStateExceptionClass_NEW_String: Symbol = IllegalStateExceptionClass.info.decl(nme.CONSTRUCTOR).suchThat(

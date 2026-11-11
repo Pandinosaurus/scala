@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -57,14 +57,31 @@ object AllocationTest {
   }
 
   private def costOf[T](fn: => T, tpe: String): Long = {
-    val cost = coster.calcAllocationInfo(fn, 0, "", false).min
+    val cost = coster.calcAllocationInfo(fn, 0, "", ignoreEqualCheck = false).min
     println(s"cost of tracking allocations - cost of $tpe = $cost")
     cost
   }
+
+  /** Whether the JVM uses compact object headers (JEP 519, the default from JDK 27), which are 4 bytes smaller. */
+  lazy val compactObjectHeaders: Boolean =
+    try ManagementFactory.getPlatformMXBean(classOf[com.sun.management.HotSpotDiagnosticMXBean]).getVMOption("UseCompactObjectHeaders").getValue.toBoolean
+    catch { case _: IllegalArgumentException => false }
+
+  private def objectHeaderSize: Int = if (compactObjectHeaders) 8 else 12
+  private def align(size: Int): Int = (size + 7) / 8 * 8
+
+  /** The size of an object whose fields take `fieldBytes`, assuming compressed oops. */
+  def objectSize(fieldBytes: Int): Int = align(objectHeaderSize + fieldBytes)
+
+  /** The size of an array of references, assuming compressed oops. */
+  def refArraySize(length: Int): Int = align(objectHeaderSize + 4 + 4 * length)
 }
 
 trait AllocationTest {
   import AllocationTest._
+
+  /** `classic` with the classic object header layout, `compact` with compact object headers. */
+  def sizeFor(classic: Long, compact: Long): Long = if (compactObjectHeaders) compact else classic
 
   /** Asserts whether it's expected for `a == b` to allocate memory. */
   def nonAllocatingEqual(expected: Boolean, a: AnyRef, b: AnyRef): Unit = {
@@ -77,16 +94,17 @@ trait AllocationTest {
   }
 
   private def showAllocations(allocations: List[Long]): String = allocations match {
-    case Nil       => ""
-    case a :: tail =>
+    case a :: allocations =>
       val sb = new StringBuilder
       def append(a: Long, count: Int) = sb.append(s" allocation $a ($count times)\n")
-      @tailrec def loop(allocations: List[Long], last: Long, count: Int): String = allocations match {
-        case Nil                    => append(last, count).result()
-        case a :: tail if a != last => append(a, count); loop(tail, a, 1)
-        case a :: tail              => loop(tail, a, count + 1)
+      def loop(allocations: List[Long], last: Long, count: Int): String = allocations match {
+        case Nil => append(last, count).result()
+        case b :: allocations =>
+          val n = if (b != last) { append(b, count); 1 } else count + 1
+          loop(allocations, b, n)
       }
-      loop(tail, a, 1)
+      loop(allocations, a, 1)
+    case _         => ""
   }
 
   /** Asserts that the execution of `fn` allocates `size` bytes or less. */
@@ -132,6 +150,7 @@ trait AllocationTest {
   private[AllocationTest] def calcAllocationInfo[T](fn: => T, cost: Long, text: String, ignoreEqualCheck: Boolean)(implicit execution: AllocationExecution = AllocationExecution()): AllocationInfo[T] = {
     val expected  = fn
     val extraText = if (text.isEmpty) "" else s" -- $text"
+    @annotation.nowarn("cat=deprecation")
     val id        = Thread.currentThread().getId
     val counts    = new Array[Long](execution.executionCount)
 

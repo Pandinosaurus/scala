@@ -34,9 +34,6 @@
 /sandbox/
 
 # intellij
-/src/intellij*/*.iml
-/src/intellij*/*.ipr
-/src/intellij*/*.iws
 **/.cache
 /.idea
 /.settings
@@ -61,9 +58,15 @@ jitwatch.out
 /build-restarr/
 /target-restarr/
 
+# scala-cli
+.scala-build
+
 # metals
 .metals
 .bloop
 project/**/metals.sbt
 
 .bsp
+.history
+
+.claude

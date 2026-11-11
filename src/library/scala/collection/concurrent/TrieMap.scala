@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -21,6 +21,7 @@ import scala.collection.concurrent.TrieMap.RemovalPolicy
 import scala.collection.generic.DefaultSerializable
 import scala.collection.immutable.{List, Nil}
 import scala.collection.mutable.GrowableBuilder
+import scala.util.Try
 import scala.util.hashing.Hashing
 
 private[collection] final class INode[K, V](bn: MainNode[K, V], g: Gen, equiv: Equiv[K]) extends INodeBase[K, V](g) {
@@ -100,7 +101,7 @@ private[collection] final class INode[K, V](bn: MainNode[K, V], g: Gen, equiv: E
 
   /** Inserts a key value pair, overwriting the old pair if the keys match.
     *
-    *  @return        true if successful, false otherwise
+    *  @return        `true` if successful, `false` otherwise
     */
   @tailrec def rec_insert(k: K, v: V, hc: Int, lev: Int, parent: INode[K, V], startgen: Gen, ct: TrieMap[K, V]): Boolean = {
     val m = GCAS_READ(ct) // use -Yinline!
@@ -301,7 +302,7 @@ private[collection] final class INode[K, V](bn: MainNode[K, V], g: Gen, equiv: E
     * @param removalPolicy policy deciding whether to remove `k` based on `v` and the
     *                       current value associated with `k` (Always, FullEquals, or ReferenceEq)
     *
-    *  @return              null if not successful, an Option[V] indicating the previous value otherwise
+    *  @return              `null` if not successful, an `Option[V]` indicating the previous value otherwise
     */
   def rec_remove(
     k: K,
@@ -313,9 +314,7 @@ private[collection] final class INode[K, V](bn: MainNode[K, V], g: Gen, equiv: E
     startgen: Gen,
     ct: TrieMap[K, V]): Option[V] = {
 
-    val m = GCAS_READ(ct) // use -Yinline!
-
-    m match {
+    GCAS_READ(ct) match {
       case cn: CNode[K, V] =>
         val idx = (hc >>> lev) & 0x1f
         val bmp = cn.bitmap
@@ -342,8 +341,8 @@ private[collection] final class INode[K, V](bn: MainNode[K, V], g: Gen, equiv: E
           if (res == None || (res eq null)) res
           else {
             @tailrec def cleanParent(nonlive: AnyRef): Unit = {
-              val pm = parent.GCAS_READ(ct)
-              pm match {
+              val cn = parent.GCAS_READ(ct)
+              cn match {
                 case cn: CNode[K, V] =>
                   val idx = (hc >>> (lev - 5)) & 0x1f
                   val bmp = cn.bitmap
@@ -407,13 +406,17 @@ private[collection] final class INode[K, V](bn: MainNode[K, V], g: Gen, equiv: E
     GCAS_READ(ct).knownSize()
 
   /* this is a quiescent method! */
-  def string(lev: Int) = "%sINode -> %s".format("  " * lev, mainnode match {
-    case null => "<null>"
-    case tn: TNode[_, _] => "TNode(%s, %s, %d, !)".format(tn.k, tn.v, tn.hc)
-    case cn: CNode[_, _] => cn.string(lev)
-    case ln: LNode[_, _] => ln.string(lev)
-    case x => "<elem: %s>".format(x)
-  })
+  def string(lev: Int): String = {
+    val spaces = "  " * lev
+    val rhs = mainnode match {
+      case null => "<null>"
+      case tn: TNode[_, _] => s"TNode(${tn.k}, ${tn.v}, ${tn.hc}, !)"
+      case cn: CNode[_, _] => cn.string(lev)
+      case ln: LNode[_, _] => ln.string(lev)
+      case x => s"<elem: $x>"
+    }
+    s"${spaces}INode -> $rhs"
+  }
 
 }
 
@@ -437,13 +440,13 @@ private[concurrent] object INode {
 private[concurrent] final class FailedNode[K, V](p: MainNode[K, V]) extends MainNode[K, V] {
   WRITE_PREV(p)
 
-  def string(lev: Int) = throw new UnsupportedOperationException
+  def string(lev: Int): Nothing = throw new UnsupportedOperationException
 
   def cachedSize(ct: AnyRef): Int = throw new UnsupportedOperationException
 
   def knownSize: Int = throw new UnsupportedOperationException
 
-  override def toString = "FailedNode(%s)".format(p)
+  override def toString = s"FailedNode($p)"
 }
 
 
@@ -458,7 +461,7 @@ private[collection] final class SNode[K, V](final val k: K, final val v: V, fina
   def copyTombed = new TNode(k, v, hc)
   def copyUntombed = new SNode(k, v, hc)
   def kvPair = (k, v)
-  def string(lev: Int) = ("  " * lev) + "SNode(%s, %s, %x)".format(k, v, hc)
+  def string(lev: Int) = ("  " * lev) + s"SNode($k, $v, ${hc.toHexString})"
 }
 
 // Tomb Node, used to ensure proper ordering during removals
@@ -470,7 +473,7 @@ private[collection] final class TNode[K, V](final val k: K, final val v: V, fina
   def kvPair = (k, v)
   def cachedSize(ct: AnyRef): Int = 1
   def knownSize: Int = 1
-  def string(lev: Int) = ("  " * lev) + "TNode(%s, %s, %x, !)".format(k, v, hc)
+  def string(lev: Int) = ("  " * lev) + s"TNode($k, $v, ${hc.toHexString}, !)"
 }
 
 // List Node, leaf node that handles hash collisions
@@ -511,7 +514,7 @@ private[collection] final class LNode[K, V](val entries: List[(K, V)], equiv: Eq
 
   def knownSize: Int = -1 // shouldn't ever be empty, and the size of a list is not known
 
-  def string(lev: Int) = (" " * lev) + "LNode(%s)".format(entries.mkString(", "))
+  def string(lev: Int) = (" " * lev) + s"LNode(${entries.mkString(", ")})"
 
 }
 
@@ -638,7 +641,7 @@ private[collection] final class CNode[K, V](val bitmap: Int, val array: Array[Ba
     new CNode[K, V](bmp, tmparray, gen).toContracted(lev)
   }
 
-  def string(lev: Int): String = "CNode %x\n%s".format(bitmap, array.map(_.string(lev + 1)).mkString("\n"))
+  def string(lev: Int): String = s"CNode ${bitmap.toHexString}\n" + array.map(_.string(lev + 1)).mkString("\n")
 
   override def toString = {
     def elems: Seq[String] = array.flatMap {
@@ -646,7 +649,7 @@ private[collection] final class CNode[K, V](val bitmap: Int, val array: Array[Ba
       case in: INode[K, V] @uc => Iterable.single(augmentString(in.toString).drop(14) + "(" + in.gen + ")")
       case basicNode           => throw new MatchError(basicNode)
     }
-    f"CNode(sz: ${elems.size}%d; ${elems.sorted.mkString(", ")})"
+    s"CNode(sz: ${elems.size}; ${elems.sorted.mkString(", ")})"
   }
 }
 
@@ -826,7 +829,7 @@ final class TrieMap[K, V] private (r: AnyRef, rtupd: AtomicReferenceFieldUpdater
     * @param v the value compare with the value found associated with the key
     * @param removalPolicy policy deciding whether to remove `k` based on `v` and the
    *                       current value associated with `k` (Always, FullEquals, or ReferenceEq)
-    * @return an Option[V] indicating the previous value
+    * @return an `Option[V]` indicating the previous value
     */
   @tailrec private def removehc(k: K, v: V, removalPolicy: Int, hc: Int): Option[V] = {
     val r = RDCSS_READ_ROOT()
@@ -940,25 +943,25 @@ final class TrieMap[K, V] private (r: AnyRef, rtupd: AtomicReferenceFieldUpdater
   // TODO once computeIfAbsent is added to concurrent.Map,
   // move the comment there and tweak the 'at most once' part
   /** If the specified key is not already in the map, computes its value using
-    *  the given thunk `op` and enters it into the map.
-    *
-    *  If the specified mapping function throws an exception,
-    *  that exception is rethrown.
-    *
-    *  Note: This method will invoke op at most once.
-    *  However, `op` may be invoked without the result being added to the map if
-    *  a concurrent process is also trying to add a value corresponding to the
-    *  same key `k`.
-    *
-    *  @param k      the key to modify
-    *  @param op     the expression that computes the value
-    *  @return       the newly added value
-    */
-  override def getOrElseUpdate(k: K, op: => V): V = {
+   *  the given thunk `defaultValue` and enters it into the map.
+   *
+   *  If the specified mapping function throws an exception,
+   *  that exception is rethrown.
+   *
+   *  Note: This method will invoke `defaultValue` at most once.
+   *  However, `defaultValue` may be invoked without the result being added to the map if
+   *  a concurrent process is also trying to add a value corresponding to the
+   *  same key `k`.
+   *
+   *  @param k      the key to modify
+   *  @param defaultValue     the expression that computes the value
+   *  @return       the newly added value
+   */
+  override def getOrElseUpdate(k: K, @deprecatedName("op", since="2.13.13") defaultValue: => V): V = {
     val hc = computeHash(k)
     lookuphc(k, hc) match {
       case INodeBase.NO_SUCH_ELEMENT_SENTINEL =>
-        val v = op
+        val v = defaultValue
         insertifhc(k, hc, v, INode.KEY_ABSENT, fullEquals = false /* unused */) match {
           case Some(oldValue) => oldValue
           case None => v
@@ -1033,6 +1036,7 @@ final class TrieMap[K, V] private (r: AnyRef, rtupd: AtomicReferenceFieldUpdater
     (if (nonReadOnly) readOnlySnapshot() else this).sizeIs == 0 // sizeIs checks knownSize
   override protected[this] def className = "TrieMap"
 
+  override def lastOption: Option[(K, V)] = if (isEmpty) None else Try(last).toOption
 }
 
 

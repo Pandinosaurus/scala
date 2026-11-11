@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -29,7 +29,7 @@ protected[collection] object Hashing {
     improve(elemHashCode(key))
 
   /**
-    * Utility method to keep a subset of all bits in a given bitmap
+    * Utility method to keep a subset of all bits in a given bitmap.
     *
     * Example
     *    bitmap (binary): 00000001000000010000000100000001

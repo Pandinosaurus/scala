@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,8 +14,7 @@ package scala.tools.nsc
 package util
 
 import io.{AbstractFile, Directory, File, Jar}
-import java.net.MalformedURLException
-import java.net.URL
+import java.net.{MalformedURLException, URI, URISyntaxException, URL}
 import java.util.regex.PatternSyntaxException
 
 import File.pathSeparator
@@ -158,7 +157,7 @@ object ClassPath {
   def map(cp: String, f: String => String): String = join(split(cp) map f: _*)
 
   /** Expand path and possibly expanding stars */
-  def expandPath(path: String, expandStar: Boolean = true): List[String] =
+  def expandPath(path: String, expandStar: Boolean): List[String] =
     if (expandStar) split(path) flatMap expandS
     else split(path)
 
@@ -184,8 +183,8 @@ object ClassPath {
   }
 
   def specToURL(spec: String): Option[URL] =
-    try Some(new URL(spec))
-    catch { case _: MalformedURLException => None }
+    try Some(new URI(spec).toURL)
+    catch { case _: MalformedURLException | _: URISyntaxException => None }
 
   def manifests: List[java.net.URL] = {
     import scala.jdk.CollectionConverters._

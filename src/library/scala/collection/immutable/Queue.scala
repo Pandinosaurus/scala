@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -27,7 +27,7 @@ import scala.collection.mutable.{Builder, ListBuffer}
   *  where a pivot is required, in which case, a cost of `O(n)` is incurred, where `n` is the number of elements in the queue. When this happens,
   *  `n` remove operations with `O(1)` cost are guaranteed. Removing an item is on average `O(1)`.
   *
-  *  @see [[https://docs.scala-lang.org/overviews/collections/concrete-immutable-collection-classes.html#immutable-queues "Scala's Collection Library overview"]]
+  *  @see [[https://docs.scala-lang.org/overviews/collections-2.13/concrete-immutable-collection-classes.html#immutable-queues "Scala's Collection Library overview"]]
   *  section on `Immutable Queues` for more information.
   *
   *  @define Coll `immutable.Queue`
@@ -83,7 +83,7 @@ sealed class Queue[+A] protected(protected val in: List[A], protected val out: L
 
   /** Checks if the queue is empty.
     *
-    *  @return true, iff there is no element in the queue.
+    *  @return `true`, iff there is no element in the queue.
     */
   override def isEmpty: Boolean = in.isEmpty && out.isEmpty
 
@@ -163,11 +163,11 @@ sealed class Queue[+A] protected(protected val in: List[A], protected val out: L
   def enqueueAll[B >: A](iter: scala.collection.Iterable[B]): Queue[B] = appendedAll(iter)
 
   /** Returns a tuple with the first element in the queue,
-    *  and a new queue with this element removed.
-    *
-    *  @throws NoSuchElementException
-    *  @return the first element of the queue.
-    */
+   *  and a new queue with this element removed.
+   *
+   *  @return the first element of the queue.
+   *  @throws NoSuchElementException if the queue is empty
+   */
   def dequeue: (A, Queue[A]) = out match {
     case Nil if !in.isEmpty => val rev = in.reverse ; (rev.head, new Queue(Nil, rev.tail))
     case x :: xs            => (x, new Queue(in, xs))
@@ -182,11 +182,11 @@ sealed class Queue[+A] protected(protected val in: List[A], protected val out: L
   def dequeueOption: Option[(A, Queue[A])] = if(isEmpty) None else Some(dequeue)
 
   /** Returns the first element in the queue, or throws an error if there
-    *  is no element contained in the queue.
-    *
-    *  @throws NoSuchElementException
-    *  @return the first element.
-    */
+   *  is no element contained in the queue.
+   *
+   *  @throws NoSuchElementException if the queue is empty
+   *  @return the first element.
+   */
   def front: A = head
 
   /** Returns a string representation of this queue.

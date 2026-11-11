@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -15,7 +15,6 @@ package reflect
 package internal
 package transform
 
-import scala.annotation.nowarn
 import scala.language.existentials
 
 trait Transforms { self: SymbolTable =>
@@ -36,9 +35,9 @@ trait Transforms { self: SymbolTable =>
     }
   }
 
-  private[this] val uncurryLazy     = new Lazy(new { val global: Transforms.this.type = self } with UnCurry): @nowarn("cat=deprecation&msg=early initializers")
-  private[this] val erasureLazy     = new Lazy(new { val global: Transforms.this.type = self } with Erasure): @nowarn("cat=deprecation&msg=early initializers")
-  private[this] val postErasureLazy = new Lazy(new { val global: Transforms.this.type = self } with PostErasure): @nowarn("cat=deprecation&msg=early initializers")
+  private[this] val uncurryLazy     = new Lazy(new { val global: Transforms.this.type = self } with UnCurry)
+  private[this] val erasureLazy     = new Lazy(new { val global: Transforms.this.type = self } with Erasure)
+  private[this] val postErasureLazy = new Lazy(new { val global: Transforms.this.type = self } with PostErasure)
 
   def uncurry = uncurryLazy.force
   def erasure = erasureLazy.force

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -12,10 +12,10 @@
 
 package scala.jdk.javaapi
 
-import java.util.concurrent.CompletionStage
-
+import java.util.concurrent.{CompletableFuture, CompletionStage}
 import scala.concurrent.impl.FutureConvertersImpl.{CF, P}
 import scala.concurrent.{ExecutionContext, Future}
+import scala.util.Success
 
 /** This object contains methods that convert between Scala [[scala.concurrent.Future]] and Java [[java.util.concurrent.CompletionStage]].
   *
@@ -72,7 +72,17 @@ object FutureConverters {
       case f: Future[T @unchecked] => f
       case _ =>
         val p = new P[T](cs)
-        cs whenComplete p
+        val completedCF = cs match {
+          case cf0: CompletableFuture[T @unchecked] =>
+            // drop `MinimalStage` (scala/bug#12918)
+            val cf = cf0.toCompletableFuture
+            if (cf.isDone && !cf.isCompletedExceptionally) cf else null
+          case _ => null
+        }
+        if (completedCF != null)
+          p.tryComplete(Success(completedCF.join()))
+        else
+          cs.handle(p)
         p.future
     }
   }

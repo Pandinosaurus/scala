@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -80,7 +80,7 @@ class Breaks {
     def catchBreak(onBreak: => T): T
   }
 
-  /** Try a computation that produces a value, supplying a default
+  /** Tries a computation that produces a value, supplying a default
    *  to be used if the computation terminates with a `break`.
    *
    * {{{
@@ -97,7 +97,7 @@ class Breaks {
         try op catch { case ex: BreakControl if ex eq breakException => onBreak }
     }
 
-  /** Break from the dynamically closest enclosing breakable block that also uses
+  /** Breaks from the dynamically closest enclosing `breakable` block that also uses
    *  this `Breaks` instance.
    *
    *  @note This might be different from the statically closest enclosing block!
@@ -106,7 +106,7 @@ class Breaks {
   def break(): Nothing = throw breakException
 }
 
-/** An object that can be used for the break control abstraction.
+/** An object that can be used for the `break` control abstraction.
  *
  *  Example usage:
  *  {{{

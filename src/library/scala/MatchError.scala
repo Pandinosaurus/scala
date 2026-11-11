@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -18,16 +18,16 @@ package scala
  */
 final class MatchError(@transient obj: Any) extends RuntimeException {
   /** There's no reason we need to call toString eagerly,
-   *  so defer it until getMessage is called or object is serialized
+   *  so defer it until getMessage is called or object is serialized.
    */
   private[this] lazy val objString = {
     def ofClass = "of class " + obj.getClass.getName
     if (obj == null) "null"
-    else try {
-      obj.toString() + " (" + ofClass + ")"
-    } catch {
-      case _: Throwable => "an instance " + ofClass
-    }
+    else
+      try s"$obj ($ofClass)"
+      catch {
+        case _: Throwable => "an instance " + ofClass
+      }
   }
 
   @throws[java.io.ObjectStreamException]

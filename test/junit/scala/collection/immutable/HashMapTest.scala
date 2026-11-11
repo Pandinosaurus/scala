@@ -346,4 +346,77 @@ class HashMapTest extends AllocationTest{
     assertThrows[NoSuchElementException](HashMap(1->1)(2), _ == "key not found: 2")
     assertThrows[NoSuchElementException](HashMap.empty(3), _ == "key not found: 3")
   }
+
+  class UpdateCountingMap[M <: Map[Int, String]](val updateCount: Int, inner: M) extends AbstractMap[Int, String] {
+    override def removed(key: Int): UpdateCountingMap[M] =
+      new UpdateCountingMap(updateCount + 1, inner.removed(key).asInstanceOf[M])
+
+    override def updated[V1 >: String](key: Int, value: V1): UpdateCountingMap[M] =
+      new UpdateCountingMap(updateCount + 1, inner.updated(key, value.asInstanceOf[String]).asInstanceOf[M])
+
+    override def get(key: Int): Option[String] = inner.get(key)
+
+    override def iterator: Iterator[(Int, String)] = inner.iterator
+  }
+
+  def ensureNoRedundantUpdates[M <: Map[Int, String]](m0: UpdateCountingMap[M]): Unit = {
+    val m1 = m0.updatedWith(3){
+      case None => Some("three")
+      case some => some
+    }.asInstanceOf[UpdateCountingMap[M]]
+    assert(m1.updateCount == 1, "real update should be counted")
+    assert(m1.get(3).exists("three".==), "real updated value is retrieved")
+
+    val m2 = m1.updatedWith(3){
+      case None => Some("tres")
+      case some => some
+    }.asInstanceOf[UpdateCountingMap[M]]
+    assert(m2.updateCount == 1, "existing key redundant updates should be avoided")
+    assert(m2.get(3).exists("three".==), "existing value is retrieved")
+
+    val m3 = m2.updatedWith(3)(_ => Some("tres")).asInstanceOf[UpdateCountingMap[M]]
+    assert(m3.updateCount == 2, "override value should be counted")
+    assert(m3.get(3).exists("tres".==), "overridden value is retrieved")
+  }
+
+  @Test
+  def ensureNoRedundantUpdatesMap(): Unit = {
+    val m0 = new UpdateCountingMap(0, Map.empty[Int, String])
+    ensureNoRedundantUpdates(m0)
+  }
+
+  @Test
+  def ensureNoRedundantUpdatesSortedMap(): Unit = {
+    val m0 = new UpdateCountingMap(0, SortedMap.empty[Int, String])
+    ensureNoRedundantUpdates(m0)
+  }
+
+  @Test
+  def mergedWithSingleton(): Unit = {
+    val big = HashMap.from((1 to 100).map(i => i -> s"v$i"))
+    var calls = List.empty[((Int, String), (Int, String))]
+    val f: ((Int, String), (Int, String)) => (Int, String) = { (l, r) => calls ::= ((l, r)); l._1 -> (l._2 + r._2) }
+
+    // singleton `that`, key present
+    val present = big.merged(HashMap(42 -> "x"))(f)
+    assertEquals(List(((42, "v42"), (42, "x"))), calls)
+    assertEquals(big.updated(42, "v42x"), present)
+
+    // singleton `this`, key present
+    calls = Nil
+    val present2 = HashMap(42 -> "x").merged(big)(f)
+    assertEquals(List(((42, "x"), (42, "v42"))), calls)
+    assertEquals(big.updated(42, "xv42"), present2)
+
+    // singleton `that` / `this`, key absent: mergef is not called
+    calls = Nil
+    assertEquals(big.updated(1000, "y"), big.merged(HashMap(1000 -> "y"))(f))
+    assertEquals(big.updated(1000, "y"), HashMap(1000 -> "y").merged(big)(f))
+    assertTrue(calls.isEmpty)
+
+    // mergef returning a different key replaces the merged key
+    val expected = big.removed(42).updated(1000, "x")
+    assertEquals(expected, big.merged(HashMap(42 -> "x")) { case (_, (_, r)) => 1000 -> r })
+    assertEquals(expected, HashMap(42 -> "x").merged(big) { case ((_, l), _) => 1000 -> l })
+  }
 }

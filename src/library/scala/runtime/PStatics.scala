@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -15,5 +15,7 @@ package scala.runtime
 // things that should be in `Statics`, but can't be yet for bincompat reasons
 // TODO 3.T: move to `Statics`
 private[scala] object PStatics {
-  final val VM_MaxArraySize = 2147483645 // == `Int.MaxValue - 2`, hotspot limit
+  // `Int.MaxValue - 8` traditional soft limit to maximize compatibility with diverse JVMs
+  // See https://stackoverflow.com/a/8381338 for example
+  final val VM_MaxArraySize = 2147483639
 }

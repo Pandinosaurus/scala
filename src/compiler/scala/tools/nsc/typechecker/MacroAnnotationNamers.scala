@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -15,7 +15,7 @@ package scala.tools.nsc.typechecker
 import scala.tools.nsc.Reporting.WarningCategory
 
 // imported from scalamacros/paradise
-trait MacroAnnotationNamers { self: Analyzer =>
+trait MacroAnnotationNamers { self: AbstractAnalyzer =>
   import global._
   import scala.reflect.internal.Flags._
   import scala.reflect.internal.Mode._
@@ -58,11 +58,11 @@ trait MacroAnnotationNamers { self: Analyzer =>
           case _                  => abort("Unexpected tree: " + tree)
         }
         if (isPastTyper) sym.name.toTermName match {
-          case nme.IMPORT | nme.OUTER | nme.ANON_CLASS_NAME | nme.ANON_FUN_NAME | nme.CONSTRUCTOR => ()
-          case _                                                                                  =>
+          case nme.IMPORT | nme.OUTER | nme.ANON_CLASS_NAME | nme.ANON_FUN_NAME | nme.CONSTRUCTOR =>
+          case _ =>
             tree match {
-              case md: DefDef => log("[+symbol] " + sym.debugLocationString)
-              case _          =>
+              case _: DefDef => log("[+symbol] " + sym.debugLocationString)
+              case _ =>
             }
         }
         tree.symbol = sym
@@ -77,7 +77,7 @@ trait MacroAnnotationNamers { self: Analyzer =>
         sym
       }
       deriveSymbolFromSource(tree) {
-        case tree @ ClassDef(mods, name, _, _) =>
+        case cdef @ ClassDef(mods, name, _, _) =>
           val existing = context.scope.lookup(name)
           val isRedefinition = (
                                existing.isType
@@ -90,10 +90,10 @@ trait MacroAnnotationNamers { self: Analyzer =>
                                )
           val clazz: Symbol = {
             if (isRedefinition) {
-              updatePosFlags(existing, tree.pos, mods.flags)
-              setPrivateWithin(tree, existing)
+              updatePosFlags(existing, cdef.pos, mods.flags)
+              setPrivateWithin(cdef, existing)
               clearRenamedCaseAccessors(existing)
-              tree.symbol = existing
+              cdef.symbol = existing
               existing
             }
             else coreCreateAssignAndEnterSymbol setFlag inConstructorFlag
@@ -111,7 +111,7 @@ trait MacroAnnotationNamers { self: Analyzer =>
             assert(clazz.name.toString.indexOf('(') < 0, clazz.name)  // )
           }
           clazz
-        case tree @ ModuleDef(mods, name, _) =>
+        case mdef @ ModuleDef(mods, name, _) =>
           var m: Symbol = context.scope lookupModule name
           val moduleFlags = mods.flags | MODULE
           // TODO: inCurrentScope(m) check that's present in vanilla Namer is omitted here
@@ -128,18 +128,18 @@ trait MacroAnnotationNamers { self: Analyzer =>
               val packageScope = m.enclosingPackageClass.rawInfo.decls
               packageScope.filter(_.owner != m.enclosingPackageClass).toList.foreach(packageScope unlink _)
             }
-            updatePosFlags(m, tree.pos, moduleFlags)
-            setPrivateWithin(tree, m)
-            m.moduleClass andAlso (setPrivateWithin(tree, _))
+            updatePosFlags(m, mdef.pos, moduleFlags)
+            setPrivateWithin(mdef, m)
+            m.moduleClass andAlso (setPrivateWithin(mdef, _))
             context.unit.synthetics -= m
-            tree.symbol = m
+            mdef.symbol = m
           }
           else {
             m = coreCreateAssignAndEnterSymbol
             m.moduleClass setFlag moduleClassFlags(moduleFlags)
-            setPrivateWithin(tree, m.moduleClass)
+            setPrivateWithin(mdef, m.moduleClass)
           }
-          m.moduleClass setInfo namerOf(m).moduleClassTypeCompleter(tree)
+          m.moduleClass setInfo namerOf(m).moduleClassTypeCompleter(mdef)
           if (m.isTopLevel && !m.hasPackageFlag) {
             m.moduleClass.associatedFile = contextFile
             currentRun.symSource(m) = m.moduleClass.sourceFile
@@ -375,7 +375,7 @@ trait MacroAnnotationNamers { self: Analyzer =>
     private implicit class RichType(tpe: Type) {
       def completeOnlyExpansions(sym: Symbol) = tpe match {
         case mec: MacroAnnotationNamer#MaybeExpandeeCompleter => mec.complete(sym, onlyExpansions = true)
-        case c                                                => ()
+        case _ =>
       }
     }
 
@@ -386,7 +386,7 @@ trait MacroAnnotationNamers { self: Analyzer =>
       sym.setInfo(new MaybeExpandeeCompleter(tree) {
         override def kind = s"maybeExpandeeCompleter for ${sym.accurateKindString} ${sym.rawname}#${sym.id}"
         override def maybeExpand(): Unit = {
-          val companion = if (tree.isInstanceOf[ClassDef]) patchedCompanionSymbolOf(sym, context) else NoSymbol
+          val companion = if (this.tree.isInstanceOf[ClassDef]) patchedCompanionSymbolOf(sym, context) else NoSymbol
 
           def maybeExpand(annotation: Tree, annottee: Tree, maybeExpandee: Tree): Option[List[Tree]] =
             if (context.macrosEnabled) { // TODO: when is this bit flipped -- can we pull this check out farther?
@@ -395,7 +395,7 @@ trait MacroAnnotationNamers { self: Analyzer =>
               if (mann.isClass && mann.hasFlag(MACRO)) {
                 assert(!currentRun.compiles(mann), mann)
                 val annm = prepareAnnotationMacro(annotation, mann, sym, annottee, maybeExpandee)
-                expandAnnotationMacro(tree, annm)
+                expandAnnotationMacro(this.tree, annm)
                 // if we encounter an error, we just return None, so that other macro annotations can proceed
                 // this is unlike macroExpand1 when any error in an expandee blocks expansions
                 // there it's necessary in order not to exacerbate typer errors
@@ -424,7 +424,7 @@ trait MacroAnnotationNamers { self: Analyzer =>
               enterSyms(expanded) // TODO: we can't reliably expand into imports, because they won't be accounted by definitions below us
             case None =>
               markNotExpandable(sym)
-              finishSymbolNotExpandee(tree)
+              finishSymbolNotExpandee(this.tree)
           }
 
           // take care of the companion if it's no longer needed
@@ -537,7 +537,7 @@ trait MacroAnnotationNamers { self: Analyzer =>
               if (defSym == NoSymbol) cx = cx.outer
             }
           }
-          if (defSym == NoSymbol && settings.exposeEmptyPackage) {
+          if (defSym == NoSymbol && settings.exposeEmptyPackage.value) {
             defSym = rootMirror.EmptyPackageClass.info member name
           }
 
@@ -774,7 +774,7 @@ trait MacroAnnotationNamers { self: Analyzer =>
       }
       def rewrapAfterTransform(stat: Tree, transformed: List[Tree]): List[Tree] = (stat, transformed) match {
         case (stat @ DocDef(comment, _), List(transformed: MemberDef)) => List(treeCopy.DocDef(stat, comment, transformed))
-        case (stat @ DocDef(comment, _), List(transformed: DocDef)) => List(transformed)
+        case (DocDef(_, _), List(transformed: DocDef)) => List(transformed)
         case (_, Nil | List(_: MemberDef)) => transformed
         case (_, unexpected) => unexpected // NOTE: who knows how people are already using macro annotations, so it's scary to fail here
       }

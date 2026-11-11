@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,9 +14,10 @@ package scala
 package collection
 package immutable
 
-/**
-  * Trait that overrides operations to take advantage of strict builders.
-  */
+import scala.collection.generic.CommonErrors
+
+/** Trait that overrides operations to take advantage of strict builders.
+ */
 trait StrictOptimizedSeqOps[+A, +CC[_], +C]
   extends Any
     with SeqOps[A, CC, C]
@@ -39,18 +40,21 @@ trait StrictOptimizedSeqOps[+A, +CC[_], +C]
   }
 
   override def updated[B >: A](index: Int, elem: B): CC[B] = {
-    if (index < 0) throw new IndexOutOfBoundsException(s"$index is out of bounds (min 0, max ${if (knownSize>=0) knownSize else "unknown"})")
+    if (index < 0)
+      throw (
+        if (knownSize >= 0) CommonErrors.indexOutOfBounds(index = index, max = knownSize)
+        else CommonErrors.indexOutOfBounds(index = index)
+      )
     val b = iterableFactory.newBuilder[B]
-    if (knownSize >= 0) {
-      b.sizeHint(size)
-    }
+    b.sizeHint(this)
     var i = 0
     val it = iterator
     while (i < index && it.hasNext) {
       b += it.next()
       i += 1
     }
-    if (!it.hasNext) throw new IndexOutOfBoundsException(s"$index is out of bounds (min 0, max ${i-1})")
+    if (!it.hasNext)
+      throw CommonErrors.indexOutOfBounds(index = index, max = i - 1)
     b += elem
     it.next()
     while (it.hasNext) b += it.next()

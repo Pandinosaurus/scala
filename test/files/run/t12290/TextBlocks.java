@@ -1,4 +1,3 @@
-// javaVersion: 15+
 class TextBlocks {
 
     final static String aText = """
@@ -75,4 +74,13 @@ class TextBlocks {
     final static String simpleString = "foo\tbar\nbaz";
 
     final static String emptyString = "";
+    final static String XY = """
+X\
+Y
+""";
+
+    final static String Octal = "X\040Y";
+    final static char Zero = '\0';
+    final static char Magic = '\52';
+    final static char Maxie = '\377';
 }

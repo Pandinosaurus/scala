@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -22,7 +22,7 @@ object Function {
    */
   def chain[T](fs: scala.collection.Seq[T => T]): T => T = { x => fs.foldLeft(x)((x, f) => f(x)) }
 
-  /** The constant function */
+  /** The constant function. */
   def const[T, U](x: T)(y: U): T = x
 
   /** Turns a function `A => Option[B]` into a `PartialFunction[A, B]`.

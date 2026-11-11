@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,8 +14,8 @@ package scala
 package runtime
 
 final class RichShort(val self: Short) extends AnyVal with ScalaWholeNumberProxy[Short] {
-  protected def num = scala.math.Numeric.ShortIsIntegral
-  protected def ord = scala.math.Ordering.Short
+  protected def num: scala.math.Numeric.ShortIsIntegral.type = scala.math.Numeric.ShortIsIntegral
+  protected def ord: scala.math.Ordering.Short.type = scala.math.Ordering.Short
 
   override def doubleValue = self.toDouble
   override def floatValue  = self.toFloat

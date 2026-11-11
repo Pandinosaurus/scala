@@ -162,7 +162,7 @@ object GenerateDocsData {
   import java.nio.charset.StandardCharsets.UTF_8
 
   // output a descriptor of compiler options for docs.scala-lang/_data
-  def run(outDir: File) {
+  def run(outDir: File): Unit = {
     val file = new File(outDir, "compiler-options.yml")
     val res = new SettingsDescriptor().descriptor
     sbt.IO.write(file, res, UTF_8, false)

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -33,9 +33,9 @@ package scala
  *    well as primitive variations and Bi-variations.
  * 
  * By convention, converters that wrap an object to provide a different
- * interface to the same underlying data structure use .asScala and .asJava
+ * interface to the same underlying data structure use `.asScala` and `.asJava`
  * extension methods, whereas converters that copy the underlying data structure
- * use .toScala and .toJava.
+ * use `.toScala` and `.toJava`.
  * 
  * In the [[javaapi]] package, the same converters can be found with a
  * java-friendly interface that don't rely on implicit enrichments.

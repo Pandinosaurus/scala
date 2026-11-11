@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -16,10 +16,10 @@ package backend.jvm
 import scala.collection.mutable.Clearable
 import scala.reflect.internal.util.{JavaClearable, Position, Statistics}
 import scala.reflect.io.AbstractFile
-import scala.tools.nsc.backend.jvm.BTypes.InternalName
-import java.util.{Collection => JCollection, Map => JMap}
-
 import scala.tools.nsc.Reporting.WarningCategory
+import scala.tools.nsc.backend.jvm.BTypes.InternalName
+import scala.util.chaining._
+import java.util.{Collection => JCollection, Map => JMap}
 
 /**
  * Functionality needed in the post-processor whose implementation depends on the compiler
@@ -186,7 +186,13 @@ object PostProcessorFrontendAccess {
 
       @inline def debug: Boolean = s.isDebug
 
-      val target: String = s.target.value
+      val target: String = s.targetValue.tap { value =>
+        s.releaseValue.foreach { release =>
+          if (value.toInt < release.toInt)
+            directBackendReporting.warning(NoPosition,
+              s"target platform version $value is older than the release version $release")
+        }
+      }
 
       private val singleOutDir = s.outputDirs.getSingleOutput
       // the call to `outputDirFor` should be frontendSynch'd, but we assume that the setting is not mutated during the backend

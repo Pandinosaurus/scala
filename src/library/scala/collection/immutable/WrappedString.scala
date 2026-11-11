@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -125,8 +125,7 @@ final class WrappedString(private val self: String) extends AbstractSeq[Char] wi
 object WrappedString extends SpecificIterableFactory[Char, WrappedString] {
   def fromSpecific(it: IterableOnce[Char]): WrappedString = {
     val b = newBuilder
-    val s = it.knownSize
-    if(s >= 0) b.sizeHint(s)
+    b.sizeHint(it)
     b ++= it
     b.result()
   }

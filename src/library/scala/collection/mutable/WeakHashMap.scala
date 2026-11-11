@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -24,7 +24,7 @@ import scala.collection.convert.JavaCollectionWrappers.{JMapWrapper, JMapWrapper
  *  @tparam K      type of keys contained in this map
  *  @tparam V      type of values associated with the keys
  *
- *  @see [[https://docs.scala-lang.org/overviews/collections/concrete-mutable-collection-classes.html#weak-hash-maps "Scala's Collection Library overview"]]
+ *  @see [[https://docs.scala-lang.org/overviews/collections-2.13/concrete-mutable-collection-classes.html#weak-hash-maps "Scala's Collection Library overview"]]
  *  section on `Weak Hash Maps` for more information.
  *
  *  @define Coll `WeakHashMap`

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,9 +14,10 @@ package scala.tools.nsc
 package typechecker
 
 import Mode._
+import scala.annotation._
 
 trait TypersTracking {
-  self: Analyzer =>
+  self: AbstractAnalyzer =>
 
   import global._
   import typeDebug._
@@ -116,7 +117,7 @@ trait TypersTracking {
       show(resetIfEmpty(indented("""\-> """ + s)))
       typedTree
     }
-    def showAdapt(original: Tree, adapted: Tree, pt: Type, context: Context): Unit = {
+    def showAdapt(original: Tree, adapted: Tree, pt: Type, @unused context: Context): Unit = {
       if (!noPrintAdapt(original, adapted)) {
         def tree_s1 = inLightCyan(truncAndOneLine(ptTree(original)))
         def pt_s = if (pt.isWildcard) "" else s" based on pt $pt"

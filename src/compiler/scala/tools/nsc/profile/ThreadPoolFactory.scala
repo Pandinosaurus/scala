@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -16,6 +16,7 @@ import java.util.concurrent.ThreadPoolExecutor.AbortPolicy
 import java.util.concurrent._
 import java.util.concurrent.atomic.AtomicInteger
 
+import scala.annotation._
 import scala.tools.nsc.{Global, Phase}
 
 sealed trait ThreadPoolFactory {
@@ -44,7 +45,7 @@ object ThreadPoolFactory {
     private def childGroup(name: String) = new ThreadGroup(baseGroup, name)
 
     // Invoked when a new `Worker` is created, see `CommonThreadFactory.newThread`
-    protected def wrapWorker(worker: Runnable, shortId: String): Runnable = worker
+    protected def wrapWorker(worker: Runnable, @unused shortId: String): Runnable = worker
 
     protected final class CommonThreadFactory(
         shortId: String,

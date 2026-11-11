@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -16,14 +16,15 @@
 package scala.tools.nsc
 package javac
 
-import scala.collection.mutable.ListBuffer
 import symtab.Flags
 import JavaTokens._
-import scala.annotation.tailrec
+import scala.annotation._
+import scala.collection.mutable
+import scala.collection.mutable.ListBuffer
 import scala.language.implicitConversions
-import scala.reflect.internal.util.Position
-import scala.reflect.internal.util.ListOfNil
+import scala.reflect.internal.util.{CodeAction, ListOfNil, Position}
 import scala.tools.nsc.Reporting.WarningCategory
+import scala.util.chaining._
 
 trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
   val global : Global
@@ -37,14 +38,34 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
     def freshName(prefix: String): Name = freshTermName(prefix)
     def freshTermName(prefix: String): TermName = unit.freshTermName(prefix)
     def freshTypeName(prefix: String): TypeName = unit.freshTypeName(prefix)
-    def deprecationWarning(off: Int, msg: String, since: String) = runReporting.deprecationWarning(off, msg, since, site = "", origin = "")
+    def deprecationWarning(off: Int, msg: String, since: String, actions: List[CodeAction]) = runReporting.deprecationWarning(off, msg, since, site = "", origin = "", actions)
     implicit def i2p(offset : Int) : Position = Position.offset(unit.source, offset)
     def warning(pos : Int, msg : String) : Unit = runReporting.warning(pos, msg, WarningCategory.JavaSource, site = "")
     def syntaxError(pos: Int, msg: String) : Unit = reporter.error(pos, msg)
   }
 
+  private object ConstantExprOps {
+    object Unsupported extends scala.util.control.ControlThrowable
+
+    // binary operators, by increasing precedence
+    val binaryOps: Array[Map[Int, TermName]] = Array(
+      Map(BARBAR -> nme.ZOR),
+      Map(AMPAMP -> nme.ZAND),
+      Map(BAR -> nme.OR),
+      Map(HAT -> nme.XOR),
+      Map(AMP -> nme.AND),
+      Map(EQEQ -> nme.EQ, BANGEQ -> nme.NE),
+      Map(LT -> nme.LT, GT -> nme.GT, LTEQ -> nme.LE, GTEQ -> nme.GE),
+      Map(LTLT -> nme.LSL, GTGT -> nme.ASR, GTGTGT -> nme.LSR),
+      Map(PLUS -> nme.ADD, MINUS -> nme.SUB),
+      Map(ASTERISK -> nme.MUL, SLASH -> nme.DIV, PERCENT -> nme.MOD),
+    )
+    val unaryOps: Map[Int, TermName] = Map(PLUS -> nme.UNARY_+, MINUS -> nme.UNARY_-, TILDE -> nme.UNARY_~, BANG -> nme.UNARY_!)
+  }
+
   abstract class JavaParser extends ParserCommon {
     val in: JavaScanner
+    def unit: CompilationUnit
 
     def freshName(prefix : String): Name
     protected implicit def i2p(offset : Int) : Position
@@ -266,13 +287,15 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
     }
 
     @tailrec
-    final def optArrayBrackets(tpt: Tree): Tree =
+    final def optArrayBrackets(tpt: Tree): Tree = {
+      annotations()
       if (in.token == LBRACKET) {
         val tpt1 = atPos(in.pos) { arrayOf(tpt) }
         in.nextToken()
         accept(RBRACKET)
         optArrayBrackets(tpt1)
       } else tpt
+    }
 
     def basicType(): Tree =
       atPos(in.pos) {
@@ -295,7 +318,7 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
         if (in.token == FINAL) in.nextToken()
         if (in.token == IDENTIFIER) {
           var t = typeArgs(atPos(in.currentPos)(Ident(ident())))
-          // typeSelect generates Select nodes is the lhs is an Ident or Select,
+          // typeSelect generates Select nodes if the lhs is an Ident or Select,
           // SelectFromTypeTree otherwise. See #3567.
           // Select nodes can be later
           // converted in the typechecker to SelectFromTypeTree if the class
@@ -304,8 +327,11 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
             case Ident(_) | Select(_, _) => Select(t, name)
             case _ => SelectFromTypeTree(t, name.toTypeName)
           }
+          if (in.token == DOT)
+            t.updateAttachment(RootSelection)
           while (in.token == DOT) {
             in.nextToken()
+            annotations() // TODO: fix scala/bug#9883 (JSR 308)
             t = typeArgs(atPos(in.currentPos)(typeSelect(t, ident())))
           }
           convertToTypeId(t)
@@ -317,7 +343,8 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
 
     def typeArgs(t: Tree): Tree = {
       val wildcards = new ListBuffer[TypeDef]
-      def typeArg(): Tree =
+      def typeArg(): Tree = {
+        annotations()
         if (in.token == QMARK) {
           val pos = in.currentPos
           in.nextToken()
@@ -335,6 +362,7 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
         } else {
           typ()
         }
+      }
       if (in.token == LT) {
         in.nextToken()
         val t1 = convertToTypeId(t)
@@ -373,7 +401,7 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
      *  // We only support a subset of the Java syntax that can form constant expressions.
      *  //   https://docs.oracle.com/javase/specs/jls/se14/html/jls-15.html#jls-15.29
      *  //
-     *  // Luckily, we can just parse matching `(` and `)` to find our way to the end of the the argument list.
+     *  // Luckily, we can just parse matching `(` and `)` to find our way to the end of the argument list.
      *  // and drop the arguments until we implement full support for Java constant expressions
      *  //
      *  ConditionalExpressionSubset := Literal
@@ -385,7 +413,7 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
      * ElementValueList             ::= ElementValue {`,` ElementValue}
      */
     def annotation(): Tree = {
-      object LiteralK { def unapply(token: Token) = tryLiteral() }
+      object LiteralK { def unapply(@unused token: Token) = tryLiteral() }
 
       def elementValue(): Tree = in.token match {
         case LiteralK(k) => in.nextToken(); atPos(in.currentPos)(Literal(k))
@@ -443,16 +471,16 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
       }
     }
 
-    def modifiers(inInterface: Boolean): Modifiers = {
+    def modifiers(inInterface: Boolean, annots0: List[Tree] = Nil): Modifiers = {
       var flags: Long = Flags.JAVA
       // assumed true unless we see public/private/protected
       var isPackageAccess = true
-      var annots: List[Tree] = Nil
+      var annots: List[Tree] = annots0
       def addAnnot(sym: Symbol) = annots :+= New(sym.tpe)
 
       while (true) {
         in.token match {
-          case AT if (in.lookaheadToken != INTERFACE) =>
+          case AT if in.lookaheadToken != INTERFACE =>
             in.nextToken()
             val annot = annotation()
             if (annot.nonEmpty) annots :+= annot
@@ -493,11 +521,39 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
           case SYNCHRONIZED =>
             in.nextToken()
           case _ =>
-            val privateWithin: TypeName =
-              if (isPackageAccess && !inInterface) thisPackageName
-              else tpnme.EMPTY
-
-            return Modifiers(flags, privateWithin) withAnnotations annots
+            val unsealed = 0L   // no flag for UNSEALED
+            def consume(added: FlagSet): false = { in.nextToken(); flags |= added; false }
+            def lookingAhead(s: String): Boolean = {
+              import scala.reflect.internal.Chars._
+              var i = 0
+              val n = s.length
+              val lookahead = in.in.lookahead
+              while (i < n && lookahead.ch != SU) {
+                if (lookahead.ch != s.charAt(i)) return false
+                lookahead.next()
+                i += 1
+              }
+              i == n && Character.isWhitespace(lookahead.ch)
+            }
+            val done = (in.token != IDENTIFIER) || (
+              in.name match {
+                case nme.javaRestrictedIdentifiers.SEALED => consume(Flags.SEALED)
+                case nme.javaRestrictedIdentifiers.UNSEALED => consume(unsealed)
+                case nme.javaRestrictedIdentifiers.NON =>
+                  !lookingAhead("-sealed") || {
+                    in.nextToken()
+                    in.nextToken()
+                    consume(unsealed)
+                  }
+                case _ => true
+              }
+            )
+            if (done) {
+              val privateWithin: TypeName =
+                if (isPackageAccess && !inInterface) thisPackageName
+                else tpnme.EMPTY
+              return Modifiers(flags, privateWithin) withAnnotations annots
+            }
         }
       }
       abort("should not be here")
@@ -551,11 +607,43 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
      varDecl(in.currentPos, Modifiers(Flags.JAVA | Flags.PARAM, typeNames.EMPTY, anns), t, ident().toTermName)
     }
 
-    def optThrows(): Unit = {
+    /** Type parameters of the enclosing classes, innermost first. */
+    private[this] var classTypeParams: List[List[TypeDef]] = Nil
+
+    def inClassTypeParamScope[T](tparams: List[TypeDef])(body: => T): T = {
+      val saved = classTypeParams
+      classTypeParams = tparams :: classTypeParams
+      try body finally classTypeParams = saved
+    }
+
+    /** Parses an optional `throws` clause, returning `@throws[T]()` annotations for the thrown types.
+     *
+     *  A thrown type variable is replaced by its erasure, which is what `ClassfileParser` sees in the
+     *  `Exceptions` attribute. This way, the annotations, and hence the `Exceptions` attributes and generic
+     *  signatures of forwarders to this method, are the same whether the method is compiled from source
+     *  or from a classfile.
+     */
+    def optThrows(methodTypeParams: List[TypeDef]): List[Tree] = {
+      val scope = (methodTypeParams :: classTypeParams).flatten
+      def erased(tp: Tree, seen: Set[Name]): Tree = tp match {
+        case Ident(name) if !seen(name) =>
+          scope.find(_.name == name) match {
+            case Some(TypeDef(_, _, _, TypeBoundsTree(_, hi))) if !hi.isEmpty =>
+              val first = hi match {
+                case CompoundTypeTree(Template(parent :: _, _, _)) => parent
+                case _                                             => hi
+              }
+              erased(first.duplicate.setPos(tp.pos), seen + name)
+            case _ => tp
+          }
+        case _ => tp
+      }
       if (in.token == THROWS) {
         in.nextToken()
-        repsep(() => typ(), COMMA)
-      }
+        repsep(() => typ(), COMMA).map { tp =>
+          atPos(tp.pos)(New(AppliedTypeTree(scalaDot(TypeName("throws")), List(erased(tp, Set.empty))), ListOfNil))
+        }
+      } else Nil
     }
 
     def methodBody(): Tree = {
@@ -593,10 +681,10 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
       if (in.token == LPAREN && rtptName != nme.EMPTY && !inInterface) {
         // constructor declaration
         val vparams = formalParams()
-        optThrows()
+        val throwsAnnots = optThrows(tparams)
         List {
           atPos(pos) {
-            DefDef(mods, nme.CONSTRUCTOR, tparams, List(vparams), TypeTree(), methodBody())
+            DefDef(mods withAnnotations throwsAnnots, nme.CONSTRUCTOR, tparams, List(vparams), TypeTree(), methodBody())
           }
         }
       } else if (in.token == LBRACE && rtptName != nme.EMPTY && parentToken == RECORD) {
@@ -612,7 +700,7 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
           // method declaration
           val vparams = formalParams()
           if (!isVoid) rtpt = optArrayBrackets(rtpt)
-          optThrows()
+          mods1 = mods1 withAnnotations optThrows(tparams)
           val isConcreteInterfaceMethod = !inInterface || (mods hasFlag Flags.JAVA_DEFAULTMETHOD) || (mods hasFlag Flags.STATIC) || (mods hasFlag Flags.PRIVATE)
           val bodyOk = !(mods1 hasFlag Flags.DEFERRED) && isConcreteInterfaceMethod
           val body =
@@ -692,59 +780,144 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
     def varDecl(pos: Position, mods: Modifiers, tpt: Tree, name: TermName): ValDef = {
       val tpt1 = optArrayBrackets(tpt)
 
-      /* Tries to detect final static literals syntactically and returns a constant type replacement */
-      def optConstantTpe(): Tree = {
-        def constantTpe(const: Constant): Tree = TypeTree(ConstantType(const))
-
-        def forConst(const: Constant): Tree = {
-          in.nextToken()
-          if (in.token != SEMI) tpt1
-          else {
-            def isStringTyped = tpt1 match {
-              case Ident(TypeName("String")) => true
-              case _ => false
-            }
-            if (const.tag == StringTag && isStringTyped) constantTpe(const)
-            else if (tpt1.tpe != null && (const.tag == BooleanTag || const.isNumeric)) {
-              // for example, literal 'a' is ok for float. 127 is ok for byte, but 128 is not.
-              val converted = const.convertTo(tpt1.tpe)
-              if (converted == null) tpt1
-              else constantTpe(converted)
-            } else tpt1
-          }
+      // A constant expression, folded by the namer, see `JavaConstantInitializer`
+      var constantInitializer: Tree = EmptyTree
+      if (in.token == EQUALS && !mods.isParameter) {
+        in.nextToken()
+        // a constant variable, if initialized with a constant expression (JLS 4.12.4)
+        def mayBeConstantTyped = tpt1 match {
+          case _: TypeTree if tpt1.tpe != null => isPrimitiveValueType(tpt1.tpe)
+          case Ident(tpnme.String) | Select(_, tpnme.String) => true // resolved by the namer
+          case _ => false
         }
-
-        in.nextToken() // EQUALS
-        if (mods.hasFlag(Flags.STATIC) && mods.isFinal) {
-          val neg = in.token match {
-            case MINUS | BANG => in.nextToken(); true
-            case _ => false
-          }
-          tryLiteral(neg).map(forConst).getOrElse(tpt1)
-        } else tpt1
+        if (mods.isFinal && mayBeConstantTyped) constantExprOpt().foreach(constantInitializer = _)
+        else skipTo(COMMA, SEMI)
       }
-
-      val tpt2: Tree =
-        if (in.token == EQUALS && !mods.isParameter) {
-          val res = optConstantTpe()
-          skipTo(COMMA, SEMI)
-          res
-        } else tpt1
 
       val mods1 = if (mods.isFinal) mods &~ Flags.FINAL else mods | Flags.MUTABLE
       atPos(pos) {
-        ValDef(mods1, name, tpt2, blankExpr)
+        ValDef(mods1, name, tpt1, blankExpr)
+          .tap(vd => if (!constantInitializer.isEmpty) vd.updateAttachment(analyzer.JavaConstantInitializer(constantInitializer)))
       }
     }
 
-    def memberDecl(mods: Modifiers, parentToken: Int): List[Tree] = {
-      in.token match {
-        case CLASS | ENUM | RECORD | INTERFACE | AT =>
-          typeDecl(mods)
+    /** Parses a field initializer that may be a constant expression (JLS 15.29): literals, (qualified) names,
+     *  casts to primitive types or `String`, and unary, binary and conditional operators. Whether names
+     *  refer to constants, and the value of the expression, is determined by the namer.
+     *
+     *  Unary and binary operators are represented as `Apply(Select(x, op), args)`, casts as `Typed(x, tpt)`.
+     *
+     *  Returns `None` if the initializer contains anything else, skipping to the next `,` or `;`.
+     */
+    def constantExprOpt(): Option[Tree] = {
+      import ConstantExprOps._
+      def unsupported(): Nothing = throw Unsupported
+      var depth = 0 // number of open parentheses
+
+      def expr(): Tree = {
+        val cond = binary(0)
+        if (in.token == QMARK) {
+          in.nextToken()
+          val thenp = expr()
+          if (in.token != COLON) unsupported()
+          in.nextToken()
+          atPos(cond.pos)(If(cond, thenp, expr()))
+        } else cond
+      }
+
+      def binary(level: Int): Tree =
+        if (level == binaryOps.length) unary()
+        else {
+          var t = binary(level + 1)
+          while (binaryOps(level).contains(in.token)) {
+            val op = binaryOps(level)(in.token)
+            in.nextToken()
+            t = atPos(t.pos)(Apply(Select(t, op), List(binary(level + 1))))
+          }
+          t
+        }
+
+      def isName(t: Tree): Boolean = t match {
+        case Ident(_)     => true
+        case Select(q, _) => isName(q)
+        case _            => false
+      }
+
+      def unary(): Tree = in.token match {
+        case MINUS if in.lookaheadToken == INTLIT || in.lookaheadToken == LONGLIT =>
+          // `-2147483648` is a literal
+          in.nextToken()
+          literal(negate = true)
+        case op if unaryOps.contains(op) =>
+          val pos = in.currentPos
+          in.nextToken()
+          atPos(pos)(Apply(Select(unary(), unaryOps(op)), Nil))
+        case LPAREN =>
+          val pos = in.currentPos
+          in.nextToken()
+          depth += 1
+          def closeParen(): Unit = {
+            if (in.token != RPAREN) unsupported()
+            in.nextToken()
+            depth -= 1
+          }
+          in.token match {
+            case BOOLEAN | BYTE | SHORT | CHAR | INT | LONG | FLOAT | DOUBLE =>
+              val tpt = basicType()
+              closeParen()
+              atPos(pos)(Typed(unary(), tpt))
+            case _ =>
+              val t = expr()
+              closeParen()
+              // `(String) x` is a cast, `(x) - y` is not (JLS 15.16)
+              in.token match {
+                case IDENTIFIER | LPAREN | BANG | TILDE if isName(t) => atPos(pos)(Typed(unary(), convertToTypeId(t)))
+                case token if isLiteral(token) && isName(t)         => atPos(pos)(Typed(unary(), convertToTypeId(t)))
+                case _                                              => t
+              }
+          }
+        case IDENTIFIER =>
+          var t: Tree = atPos(in.currentPos)(Ident(ident().toTermName))
+          while (in.token == DOT) {
+            in.nextToken()
+            if (in.token != IDENTIFIER) unsupported()
+            t = atPos(t.pos)(Select(t, ident().toTermName))
+          }
+          t
         case _ =>
-          termDecl(mods, parentToken)
+          literal(negate = false)
+      }
+
+      def literal(negate: Boolean): Tree = {
+        val pos = in.currentPos
+        tryLiteral(negate) match {
+          case Some(const) => in.nextToken(); atPos(pos)(Literal(const))
+          case None        => unsupported()
+        }
+      }
+
+      try {
+        val t = expr()
+        if (in.token == COMMA || in.token == SEMI) Some(t)
+        else {
+          skipTo(COMMA, SEMI)
+          None
+        }
+      } catch {
+        case Unsupported =>
+          while (depth > 0) {
+            skipTo(RPAREN)
+            if (in.token == RPAREN) in.nextToken()
+            depth -= 1
+          }
+          skipTo(COMMA, SEMI)
+          None
       }
     }
+
+    def memberDecl(mods: Modifiers, parentToken: Int): List[Tree] =
+      if (isTypeDeclStart()) typeDecl(mods)
+      else termDecl(mods, parentToken)
 
     def makeCompanionObject(cdef: ClassDef, statics: List[Tree]): Tree =
       atPos(cdef.pos) {
@@ -802,7 +975,15 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
         List()
       }
 
+    def permitsOpt() =
+      if (in.token == IDENTIFIER && in.name == nme.javaRestrictedIdentifiers.PERMITS) {
+        in.nextToken()
+        repsep(() => typ(), COMMA)
+      }
+      else Nil
+
     def classDecl(mods: Modifiers): List[Tree] = {
+      if (mods.hasFlag(SEALED)) patmat.javaClassesByUnit(unit.source) = mutable.Set.empty
       accept(CLASS)
       val pos = in.currentPos
       val name = identForType()
@@ -815,9 +996,11 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
           javaLangObject()
         }
       val interfaces = interfacesOpt()
-      val (statics, body) = typeBody(CLASS)
+      val permits = permitsOpt()
+      val (statics, body) = inClassTypeParamScope(tparams)(typeBody(CLASS))
       addCompanionObject(statics, atPos(pos) {
         ClassDef(mods, name, tparams, makeTemplate(superclass :: interfaces, body))
+          .tap(cd => if (permits.nonEmpty) cd.updateAttachment(PermittedSubclasses(permits)))
       })
     }
 
@@ -829,19 +1012,14 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
       val header = formalParams()
       val superclass = javaLangRecord()
       val interfaces = interfacesOpt()
-      val (statics, body) = typeBody(RECORD)
+      val (statics, body) = inClassTypeParamScope(tparams)(typeBody(RECORD))
 
-      // Generate accessors, if not already manually specified
-      var generateAccessors = header
-        .view
-        .map { case ValDef(mods, name, tpt, _) => (name, (tpt, mods.annotations)) }
-        .toMap
-      for (DefDef(_, name, List(), List(params), _, _) <- body if generateAccessors.contains(name) && params.isEmpty)
-        generateAccessors -= name
-
-      val accessors = generateAccessors
-        .map { case (name, (tpt, annots)) =>
-          DefDef(Modifiers(Flags.JAVA) withAnnotations annots, name, List(), List(), tpt.duplicate, blankExpr)
+      // Generate accessors, if not already explicitly specified. Record bodies tend to be trivial.
+      val existing = body.iterator.collect { case DefDef(_, name, Nil, ListOfNil, _, _) => name }.toSet
+      val accessors = header.iterator
+        .collect {
+          case ValDef(mods, name, tpt, _) if !existing(name) =>
+            DefDef(Modifiers(Flags.JAVA).withAnnotations(mods.annotations), name, tparams = Nil, vparamss = ListOfNil, tpt.duplicate, blankExpr)
         }
         .toList
 
@@ -867,6 +1045,7 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
     }
 
     def interfaceDecl(mods: Modifiers): List[Tree] = {
+      if (mods.hasFlag(SEALED)) patmat.javaClassesByUnit(unit.source) = mutable.Set.empty
       accept(INTERFACE)
       val pos = in.currentPos
       val name = identForType()
@@ -878,11 +1057,13 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
         } else {
           List(javaLangObject())
         }
-      val (statics, body) = typeBody(INTERFACE)
+      val permits = permitsOpt()
+      val (statics, body) = inClassTypeParamScope(tparams)(typeBody(INTERFACE))
       addCompanionObject(statics, atPos(pos) {
         ClassDef(mods | Flags.TRAIT | Flags.INTERFACE | Flags.ABSTRACT,
                  name, tparams,
                  makeTemplate(parents, body))
+          .tap(cd => if (permits.nonEmpty) cd.updateAttachment(PermittedSubclasses(permits)))
       })
     }
 
@@ -905,7 +1086,6 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
         } else if (in.token == SEMI) {
           in.nextToken()
         } else {
-
           // See "14.3. Local Class and Interface Declarations"
           adaptRecordIdentifier()
           if (in.token == ENUM || in.token == RECORD || definesInterface(in.token))
@@ -982,17 +1162,20 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
           blankExpr),
         DefDef(
           Modifiers(Flags.JAVA | Flags.STATIC), nme.valueOf, List(),
-          List(List(makeParam("x", TypeTree(StringTpe)))),
+          List(List(makeParam("name", TypeTree(StringTpe)))), // as named by javac (JLS 8.9.3)
           enumType,
           blankExpr))
       accept(RBRACE)
       val superclazz =
         AppliedTypeTree(javaLangDot(tpnme.Enum), List(enumType))
+      val hasAbstractMember = body.exists {
+        case m: MemberDef => m.mods.hasFlag(Flags.DEFERRED)
+        case _ => false
+      }
       val finalFlag = if (enumIsFinal) Flags.FINAL else 0L
+      val abstractFlag = if (hasAbstractMember) Flags.ABSTRACT else 0L
       addCompanionObject(consts ::: statics ::: predefs, atPos(pos) {
-        // Marking the enum class SEALED | ABSTRACT enables exhaustiveness checking. See also ClassfileParser.
-        // This is a bit of a hack and requires excluding the ABSTRACT flag in the backend, see method javaClassfileFlags.
-        ClassDef(mods | Flags.JAVA_ENUM | Flags.SEALED | Flags.ABSTRACT | finalFlag, name, List(),
+        ClassDef(mods | Flags.JAVA_ENUM | Flags.SEALED | abstractFlag | finalFlag, name, List(),
                  makeTemplate(superclazz :: interfaces, body))
       })
     }
@@ -1018,6 +1201,13 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
       (res, hasClassBody)
     }
 
+    def isTypeDeclStart(): Boolean = {
+      adaptRecordIdentifier()
+      in.token match {
+        case ENUM | INTERFACE | AT | CLASS | RECORD => true
+        case _ => false
+      }
+    }
     def typeDecl(mods: Modifiers): List[Tree] = {
       adaptRecordIdentifier()
       in.token match {
@@ -1046,35 +1236,50 @@ trait JavaParsers extends ast.parser.ParsersCommon with JavaScanners {
       else Some(Constant(l))
     }
 
-    /** CompilationUnit ::= [package QualId semi] TopStatSeq
+    /** CompilationUnit ::= [[Annotation] package QualId semi] {Import} {TypeDecl} //TopStatSeq
      */
     def compilationUnit(): Tree = {
+      var compact = false
+      def typeDeclOrCompact(mods: Modifiers): List[Tree] =
+        if (isTypeDeclStart()) typeDecl(mods)
+        else {
+          val ts = termDecl(mods, CLASS)
+          if (ts.nonEmpty) compact = true
+          Nil
+        }
+      val buf = ListBuffer.empty[Tree]
       var pos = in.currentPos
+      val leadingAnnots = if (in.token == AT) annotations() else Nil
       val pkg: RefTree =
-        if (in.token == AT || in.token == PACKAGE) {
-          annotations() // TODO: put these somewhere?
-          pos = in.currentPos
+        if (in.token == PACKAGE) {
+          if (!leadingAnnots.isEmpty) { // TODO: put these somewhere?
+            //if (unit.source.file.name != "package-info.java")
+            //  syntaxError(pos, "package annotations must be in file package-info.java")
+            pos = in.currentPos
+          }
           accept(PACKAGE)
-          val pkg = qualId().asInstanceOf[RefTree]
-          accept(SEMI)
-          pkg
-        } else {
+          qualId().asInstanceOf[RefTree].tap(_ => accept(SEMI))
+        }
+        else {
+          if (!leadingAnnots.isEmpty)
+            buf ++= typeDeclOrCompact(modifiers(inInterface = false, annots0 = leadingAnnots))
           Ident(nme.EMPTY_PACKAGE_NAME)
         }
       thisPackageName = gen.convertToTypeName(pkg) match {
         case Some(t)  => t.name.toTypeName
         case _        => tpnme.EMPTY
       }
-      val buf = new ListBuffer[Tree]
-      while (in.token == IMPORT)
-        buf ++= importDecl()
+      if (buf.isEmpty)
+        while (in.token == IMPORT)
+          buf ++= importDecl()
       while (in.token != EOF && in.token != RBRACE) {
         while (in.token == SEMI) in.nextToken()
         if (in.token != EOF)
-          buf ++= typeDecl(modifiers(inInterface = false))
+          buf ++= typeDeclOrCompact(modifiers(inInterface = false))
       }
       accept(EOF)
-      atPos(pos) {
+      if (compact) EmptyTree
+      else atPos(pos) {
         makePackaging(pkg, buf.toList)
       }
     }

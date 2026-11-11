@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -26,7 +26,7 @@ class MainClass extends Driver with EvalLoop {
   override def newCompiler(): Global = Global(settings)
 
   override def doCompile(compiler: Global): Unit = {
-    if (settings.resident) resident(compiler)
+    if (settings.resident.value) resident(compiler)
     else super.doCompile(compiler)
   }
 }

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -15,12 +15,11 @@ package collection.concurrent
 
 import scala.annotation.tailrec
 
-
 /** A template trait for mutable maps that allow concurrent access.
   *
   *  $concurrentmapinfo
   *
-  *  @see [[https://docs.scala-lang.org/overviews/collections/concrete-mutable-collection-classes.html#concurrent_maps "Scala's Collection Library overview"]]
+  *  @see [[https://docs.scala-lang.org/overviews/collections-2.13/concrete-mutable-collection-classes.html#concurrent_maps "Scala's Collection Library overview"]]
   *  section on `Concurrent Maps` for more information.
   *
   *  @tparam K  the key type of the map
@@ -32,8 +31,6 @@ import scala.annotation.tailrec
   *  This is a base trait for all Scala concurrent map implementations. It
   *  provides all of the methods a `Map` does, with the difference that all the
   *  changes are atomic. It also describes methods specific to concurrent maps.
-  *
-  *  '''Note''': The concurrent maps do not accept `'''null'''` for keys or values.
   *
   *  @define atomicop
   *  This is an atomic operation.
@@ -93,12 +90,12 @@ trait Map[K, V] extends scala.collection.mutable.Map[K, V] {
     */
   def replace(k: K, v: V): Option[V]
 
-  override def getOrElseUpdate(key: K, op: => V): V = get(key) match {
+  override def getOrElseUpdate(key: K, @deprecatedName("op", since="2.13.13") defaultValue: => V): V = get(key) match {
     case Some(v) => v
     case None =>
-      val v = op
+      val v = defaultValue
       putIfAbsent(key, v) match {
-        case Some(nv) => nv
+        case Some(ov) => ov
         case None => v
       }
   }
@@ -141,7 +138,7 @@ trait Map[K, V] extends scala.collection.mutable.Map[K, V] {
   private[collection] def replaceRefEq(k: K, oldValue: V, newValue: V): Boolean = replace(k, oldValue, newValue)
 
   /**
-   * Update a mapping for the specified key and its current optionally-mapped value
+   * Updates a mapping for the specified key and its current optionally mapped value
    * (`Some` if there is current mapping, `None` if not).
    *
    * If the remapping function returns `Some(v)`, the mapping is updated with the new value `v`.
@@ -151,7 +148,7 @@ trait Map[K, V] extends scala.collection.mutable.Map[K, V] {
    * If the map is updated by another concurrent access, the remapping function will be retried until successfully updated.
    *
    * @param key the key value
-   * @param remappingFunction a partial function that receives current optionally-mapped value and return a new mapping
+   * @param remappingFunction a function that receives current optionally mapped value and return a new mapping
    * @return the new value associated with the specified key
    */
   override def updateWith(key: K)(remappingFunction: Option[V] => Option[V]): Option[V] = updateWithAux(key)(remappingFunction)

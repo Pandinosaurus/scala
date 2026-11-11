@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -210,6 +210,9 @@ abstract class CoreBTypesFromSymbols[G <: Global] extends CoreBTypes {
   def                     jliLambdaMetafactoryRef   : ClassBType = _jliLambdaMetafactoryRef.get
   private[this] lazy val _jliLambdaMetafactoryRef   : LazyVar[ClassBType] = runLazy(classBTypeFromSymbol(requiredClass[java.lang.invoke.LambdaMetafactory]))
 
+  def                     jliStringConcatFactoryRef : ClassBType = _jliStringConcatFactoryRef.get
+  private[this] lazy val _jliStringConcatFactoryRef : LazyVar[ClassBType] = runLazy(classBTypeFromSymbol(getRequiredClass("java.lang.invoke.StringConcatFactory")))
+
   def                     srBoxesRunTimeRef         : ClassBType = _srBoxesRunTimeRef.get
   private[this] lazy val _srBoxesRunTimeRef         : LazyVar[ClassBType] = runLazy(classBTypeFromSymbol(requiredClass[scala.runtime.BoxesRunTime]))
 
@@ -242,11 +245,11 @@ abstract class CoreBTypesFromSymbols[G <: Global] extends CoreBTypes {
 
   // Z -> MethodNameAndType(boxToBoolean,(Z)Ljava/lang/Boolean;)
   def srBoxesRuntimeBoxToMethods: Map[BType, MethodNameAndType] = _srBoxesRuntimeBoxToMethods.get
-  private[this] lazy val _srBoxesRuntimeBoxToMethods: LazyVar[Map[BType, MethodNameAndType]] = runLazy(srBoxesRuntimeMethods((primitive, boxed) => "boxTo" + boxed))
+  private[this] lazy val _srBoxesRuntimeBoxToMethods: LazyVar[Map[BType, MethodNameAndType]] = runLazy(srBoxesRuntimeMethods((_, boxed) => "boxTo" + boxed))
 
   // Z -> MethodNameAndType(unboxToBoolean,(Ljava/lang/Object;)Z)
   def srBoxesRuntimeUnboxToMethods: Map[BType, MethodNameAndType] = _srBoxesRuntimeUnboxToMethods.get
-  private[this] lazy val _srBoxesRuntimeUnboxToMethods: LazyVar[Map[BType, MethodNameAndType]] = runLazy(srBoxesRuntimeMethods((primitive, boxed) => "unboxTo" + primitive))
+  private[this] lazy val _srBoxesRuntimeUnboxToMethods: LazyVar[Map[BType, MethodNameAndType]] = runLazy(srBoxesRuntimeMethods((primitive, _) => "unboxTo" + primitive))
 
   private def singleParamOfClass(cls: Symbol) = (s: Symbol) => s.paramss match {
     case List(List(param)) => param.info.typeSymbol == cls

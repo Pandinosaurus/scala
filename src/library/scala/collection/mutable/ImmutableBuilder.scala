@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -16,7 +16,7 @@ package mutable
 
 
 /**
-  * Reusable builder for immutable collections
+  * Reusable builder for immutable collections.
   */
 abstract class ImmutableBuilder[-A, C <: IterableOnce[_]](empty: C)
   extends ReusableBuilder[A, C] {

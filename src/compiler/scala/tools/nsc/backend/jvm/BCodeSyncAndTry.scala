@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -20,7 +20,7 @@ import scala.tools.asm
 
 /*
  *
- *  @author  Miguel Garcia, https://lampwww.epfl.ch/~magarcia/ScalaCompilerCornerReloaded/
+ *  @author  Miguel Garcia
  *
  */
 abstract class BCodeSyncAndTry extends BCodeBodyBuilder {
@@ -164,7 +164,7 @@ abstract class BCodeSyncAndTry extends BCodeBodyBuilder {
      *
      *  A number of code patterns can be emitted to realize the intended semantics.
      *
-     *  A popular alternative (GenICode, javac) consists in duplicating the cleanup-chain at each early-return position.
+     *  A popular alternative (javac, and the old GenICode backend) consists in duplicating the cleanup-chain at each early-return position.
      *  The principle at work being that once control is transferred to a cleanup-section,
      *  control will always stay within the cleanup-chain.
      *  That is, barring an exception being thrown in a cleanup-section, in which case the enclosing try-block
@@ -402,7 +402,7 @@ abstract class BCodeSyncAndTry extends BCodeBodyBuilder {
 
     /* `tmp` (if non-null) is the symbol of the local-var used to preserve the result of the try-body, see `guardResult` */
     def emitFinalizer(finalizer: Tree, tmp: Symbol, isDuplicate: Boolean): Unit = {
-      var saved: immutable.Map[ /* LabelDef */ Symbol, asm.Label ] = null
+      var saved: immutable.Map[ /* LabelDef */ Symbol, JumpDestination ] = null
       if (isDuplicate) {
         saved = jumpDest
         for(ldef <- labelDefsAtOrUnder.getOrElse(finalizer, Nil)) {

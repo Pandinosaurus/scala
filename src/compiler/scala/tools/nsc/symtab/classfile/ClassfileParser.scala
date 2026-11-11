@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -15,22 +15,18 @@ package tools.nsc
 package symtab
 package classfile
 
-import java.io.{ByteArrayOutputStream, IOException}
+import java.io.IOException
 import java.lang.Integer.toHexString
-import java.net.URLClassLoader
-import java.util.UUID
 
-import scala.collection.{immutable, mutable}
-import scala.collection.mutable.{ArrayBuffer, ListBuffer}
-import scala.annotation.switch
+import scala.annotation._
+import scala.collection.{immutable, mutable}, mutable.{ArrayBuffer, ListBuffer}
 import scala.reflect.internal.JavaAccFlags
 import scala.reflect.internal.pickling.ByteCodecs
 import scala.reflect.internal.util.ReusableInstance
+import scala.reflect.io.NoAbstractFile
 import scala.tools.nsc.Reporting.WarningCategory
-import scala.reflect.io.{NoAbstractFile, PlainFile, ZipArchive}
-import scala.tools.nsc.util.ClassPath
 import scala.tools.nsc.io.AbstractFile
-import scala.tools.tasty.{TastyHeaderUnpickler, TastyReader}
+import scala.tools.nsc.util.ClassPath
 import scala.tools.nsc.tasty.{TastyUniverse, TastyUnpickler}
 import scala.util.control.NonFatal
 
@@ -39,6 +35,8 @@ import scala.util.control.NonFatal
  *  @author Martin Odersky
  */
 abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
+  import ClassfileParser._
+
   val symbolTable: SymbolTable {
     def settings: Settings
   }
@@ -72,15 +70,12 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
   protected var staticScope: Scope = _         // the scope of all static definitions
   protected var pool: ConstantPool = _         // the classfile's constant pool
   protected var isScala: Boolean = _           // does class file describe a scala class?
-  protected var isTASTY: Boolean = _           // is this class accompanied by a TASTY file?
   protected var isScalaRaw: Boolean = _        // this class file is a scala class with no pickled info
   protected var busy: Symbol = _               // lock to detect recursive reads
   protected var currentClass: String = _       // JVM name of the current class
   protected var classTParams = Map[Name,Symbol]()
   protected var srcfile0 : Option[AbstractFile] = None
   protected def moduleClass: Symbol = staticModule.moduleClass
-  protected val TASTYUUIDLength: Int = 16
-  private var sawPrivateConstructor = false
   private var YtastyReader          = false
 
   private def ownerForFlags(jflags: JavaAccFlags) = if (jflags.isStatic) moduleClass else clazz
@@ -161,13 +156,24 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
         this.clazz        = clazz
         this.staticModule = module
         this.isScala      = false
-        this.YtastyReader = settings.YtastyReader
+        this.YtastyReader = settings.YtastyReader.value
 
-        val magic = in.getInt(in.bp)
-        if (magic != JAVA_MAGIC && file.name.endsWith(".sig")) {
+        val isJavaMagic = in.getInt(in.bp) == JAVA_MAGIC
+        if (!isJavaMagic && file.name.endsWith(".sig")) {
           currentClass = clazz.javaClassName
           isScala = true
           unpickler.unpickle(in.buf.take(file.sizeOption.get), 0, clazz, staticModule, file.name)
+        } else if (!isJavaMagic && file.name.endsWith(".tasty")) {
+          if (!YtastyReader)
+            MissingRequirementError.signal(s"Add -Ytasty-reader to scalac options to parse the TASTy in $file")
+
+          // TODO [tasty]: it seems tests don't fail if we remove this, but previously this
+          // was added for the following reason:
+          // >  Force scala.AnyRef, otherwise we get "error: Symbol AnyRef is missing from the classpath"
+          AnyRefClass
+
+          val bytes = in.buf.take(file.sizeOption.get)
+          TastyUnpickler.unpickle(TastyUniverse)(bytes, clazz, staticModule, file.path)
         } else {
           parseHeader()
           this.pool = new ConstantPool
@@ -225,7 +231,7 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
           case CONSTANT_METHODHANDLE                                           => in skip 3
           case CONSTANT_FIELDREF | CONSTANT_METHODREF | CONSTANT_INTFMETHODREF => in skip 4
           case CONSTANT_NAMEANDTYPE | CONSTANT_INTEGER | CONSTANT_FLOAT        => in skip 4
-          case CONSTANT_INVOKEDYNAMIC                                          => in skip 4
+          case CONSTANT_DYNAMIC | CONSTANT_INVOKEDYNAMIC                       => in skip 4
           case CONSTANT_LONG | CONSTANT_DOUBLE                                 => in skip 8 ; i += 1
           case _                                                               => errorBadTag(in.bp - 1)
         }
@@ -420,7 +426,7 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
     //   - better owner than `NoSymbol`
     //   - remove eager warning
     val msg = s"Class $name not found - continuing with a stub."
-    if ((!settings.isScaladoc) && (settings.verbose || settings.isDeveloper))
+    if ((!settings.isScaladoc) && (settings.verbose.value || settings.isDeveloper))
       loaders.warning(NoPosition, msg, WarningCategory.OtherDebug, clazz.fullNameString)
     NoSymbol.newStubSymbol(name.toTypeName, msg)
   }
@@ -501,7 +507,7 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
       if (!c.isInstanceOf[StubSymbol] && c != clazz) mismatchError(c)
     }
 
-    if (isScala || isTASTY) {
+    if (isScala) {
       () // We're done
     } else if (isScalaRaw) {
       val decls = clazz.enclosingPackage.info.decls
@@ -522,19 +528,25 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
       val parentIndex = u2()
       val parentName = if (parentIndex == 0) null else pool.getClassName(parentIndex)
       val ifaceCount = u2()
-      val ifaces = for (i <- List.range(0, ifaceCount)) yield pool.getSuperClassName(index = u2())
+      val ifaces = List.fill(ifaceCount.toInt)(pool.getSuperClassName(index = u2()))
       val completer = new ClassTypeCompleter(clazz.name, jflags, parentName, ifaces)
 
       enterOwnInnerClasses()
 
-      clazz setInfo completer
-      clazz setFlag sflags
+      clazz.setInfo(completer)
+      clazz.setFlag(sflags)
+
+      // Kotlin interop (scala/bug#13110)
+      if (clazz.isAbstract)
+        clazz.resetFlag(Flags.FINAL)
+
       moduleClass setInfo staticInfo
       moduleClass setFlag JAVA
+
       staticModule setInfo moduleClass.tpe
       staticModule setFlag JAVA
 
-      propagatePackageBoundary(jflags, clazz, staticModule, moduleClass)
+      packageAccessBoundaries.propagatePackageBoundary(jflags, clazz, staticModule, moduleClass)
 
       val fieldsStartBp = in.bp
       skipMembers() // fields
@@ -543,14 +555,9 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
       parseAttributes(clazz, completer)
 
       in.bp = fieldsStartBp
-      0 until u2() foreach (_ => parseField())
-      sawPrivateConstructor = false
-      0 until u2() foreach (_ => parseMethod())
-      val needsConstructor = (
-           !sawPrivateConstructor
-        && !(instanceScope containsName nme.CONSTRUCTOR)
-        && ((sflags & INTERFACE) == 0 || (sflags | JAVA_ANNOTATION) != 0)
-      )
+      u2() times parseField()
+      u2() times parseMethod()
+      val needsConstructor = (sflags & JAVA_ANNOTATION) != 0L
       if (needsConstructor)
         instanceScope enter clazz.newClassConstructor(NoPosition)
 
@@ -568,7 +575,7 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
     var sym = clazz.owner
     while (sym.isClass && !sym.isModuleClass) {
       for (t <- sym.tpe.typeArgs)
-        classTParams = classTParams + (t.typeSymbol.name -> t.typeSymbol)
+        classTParams += (t.typeSymbol.name -> t.typeSymbol)
 
       sym = sym.owner
     }
@@ -581,9 +588,9 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
     if ((sflags & PRIVATE) != 0L) {
       in.skip(4); skipAttributes()
     } else {
-      val name    = readName()
+      val name     = readName()
       val lazyInfo = new MemberTypeCompleter(name, jflags, pool.getExternalName(u2()).value)
-      val sym     = ownerForFlags(jflags).newValue(name.toTermName, NoPosition, sflags)
+      val sym      = ownerForFlags(jflags).newValue(name.toTermName, NoPosition, sflags)
 
       // Note: the info may be overwritten later with a generic signature
       // parsed from SignatureATTR
@@ -591,52 +598,48 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
         if (jflags.isEnum) ConstantType(Constant(sym))
         else lazyInfo
       }
-      propagatePackageBoundary(jflags, sym)
+      packageAccessBoundaries.propagatePackageBoundary(jflags, sym)
       parseAttributes(sym, lazyInfo)
       addJavaFlagsAnnotations(sym, jflags)
       getScope(jflags) enter sym
 
       // sealed java enums
-      if (jflags.isEnum) {
-        val enumClass = sym.owner.linkedClassOfClass
-        enumClass match {
+      if (jflags.isEnum)
+        sym.owner.linkedClassOfClass match {
           case NoSymbol =>
             devWarning(s"no linked class for java enum $sym in ${sym.owner}. A referencing class file might be missing an InnerClasses entry.")
-          case linked =>
-            if (!linked.isSealed)
-              // Marking the enum class SEALED | ABSTRACT enables exhaustiveness checking. See also JavaParsers.
-              // This is a bit of a hack and requires excluding the ABSTRACT flag in the backend, see method javaClassfileFlags.
-              linked setFlag (SEALED | ABSTRACT)
-            linked addChild sym
+          case enumClass =>
+            enumClass.addChild(sym)
         }
-      }
     }
   }
 
   def parseMethod(): Unit = {
     val jflags = readMethodFlags()
-    val sflags = jflags.toScalaFlags
     if (jflags.isPrivate) {
-      val isConstructor = pool.getName(u2()).value == "<init>" // opt avoid interning a Name for private methods we're about to discard
-      if (isConstructor)
-        sawPrivateConstructor = true
-      in.skip(2); skipAttributes()
+      in.skip(4); skipAttributes()
     } else {
-      if ((sflags & PRIVATE) != 0L) {
-        in.skip(4); skipAttributes()
-      } else {
-        val name = readName()
-        val sym = ownerForFlags(jflags).newMethod(name.toTermName, NoPosition, sflags)
-        // Note: the info may be overwritten later with a generic signature
-        // parsed from SignatureATTR
-        val lazyInfo = new MemberTypeCompleter(name, jflags, pool.getExternalName(u2()).value)
-        sym.info = lazyInfo
-        propagatePackageBoundary(jflags, sym)
-        parseAttributes(sym, lazyInfo)
-        addJavaFlagsAnnotations(sym, jflags)
-        getScope(jflags) enter sym
-      }
+      val name = readName()
+      val sflags = jflags.toScalaFlags
+      val sym = ownerForFlags(jflags).newMethod(name.toTermName, NoPosition, sflags)
+      // Note: the info may be overwritten later with a generic signature
+      // parsed from SignatureATTR
+      val lazyInfo = new MemberTypeCompleter(name, jflags, pool.getExternalName(u2()).value)
+      sym.info = lazyInfo
+      packageAccessBoundaries.propagatePackageBoundary(jflags, sym)
+      parseAttributes(sym, lazyInfo)
+      addJavaFlagsAnnotations(sym, jflags)
+      getScope(jflags) enter sym
     }
+  }
+
+  private class SigToTypeFail(msg: String) extends Throwable(msg)
+
+  // scala/bug#9152: sigToType can fail when directly accessing the symbol of a Java nested class
+  // `None` if `sig == null` or when `sigToType` fails
+  private def sigToTypeOpt(sym: Symbol, sig: String): Option[Type] = {
+    try Option(sig).map(sigToType(sym, _))
+    catch { case _: SigToTypeFail => None}
   }
 
   private def sigToType(sym: Symbol, sig: String): Type = {
@@ -666,10 +669,8 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
         case BOOL_TAG   => BooleanTpe
         case 'L' =>
           def processInner(tp: Type): Type = tp match {
-            case TypeRef(pre, sym, args) if (!sym.isStatic) =>
-              typeRef(processInner(pre.widen), sym, args)
-            case _ =>
-              tp
+            case TypeRef(pre, sym, args) if !sym.isStatic => typeRef(processInner(pre.widen), sym, args)
+            case _ => tp
           }
           def processClassType(tp: Type): Type = tp match {
             case TypeRef(pre, classSym, args) =>
@@ -717,9 +718,11 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
               tp
           }
 
-          val classSym = classNameToSymbol(subName(c => c == ';' || c == '<'))
-          assert(!classSym.isOverloaded, classSym.alternatives)
-          val classTpe = if (classSym eq ObjectClass) ObjectTpeJava else classSym.tpe_*
+          val classTpe = {
+            val classSym = classNameToSymbol(subName(c => c == ';' || c == '<'))
+            assert(!classSym.isOverloaded, classSym.alternatives)
+            if (classSym eq ObjectClass) ObjectTpeJava else classSym.tpe_*
+          }
           var tpe = processClassType(processInner(classTpe))
           while (sig.charAt(index) == '.') {
             accept('.')
@@ -761,7 +764,7 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
           val n = newTypeName(subName(';'.==))
           index += 1
           if (skiptvs) AnyTpe
-          else tparams(n).typeConstructor
+          else tparams.getOrElse(n, throw new SigToTypeFail(s"unknown type variable: $n")).typeConstructor
       }
     } // sig2type(tparams, skiptvs)
 
@@ -837,7 +840,9 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
 
         case tpnme.DeprecatedATTR =>
           in.skip(attrLen)
-          if (sym == clazz)
+          if (!sym.hasAnnotation(JavaDeprecatedAttr))
+            sym.addAnnotation(JavaDeprecatedAttr)
+          if (sym == clazz && !staticModule.hasAnnotation(JavaDeprecatedAttr))
             staticModule.addAnnotation(JavaDeprecatedAttr)
 
         case tpnme.ConstantValueATTR =>
@@ -850,7 +855,10 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
             val paramNameAccess = new Array[Int](paramCount)
             var i = 0
             while (i < paramCount) {
-              paramNames(i) = pool.getExternalName(u2())
+              paramNames(i) = u2() match {
+                case 0 => null  // may occur on JDK 21+, as per scala/bug#12783
+                case index => pool.getExternalName(index)
+              }
               paramNameAccess(i) = u2()
               i += 1
             }
@@ -863,16 +871,10 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
           in.skip(attrLen)
 
         case tpnme.RuntimeAnnotationATTR =>
-            val numAnnots = u2()
-          val annots = new ListBuffer[AnnotationInfo]
-            for (n <- 0 until numAnnots; annot <- parseAnnotation(u2()))
-            annots += annot
-          /* `sym.withAnnotations(annots)`, like `sym.addAnnotation(annot)`, prepends,
-           * so if we parsed in classfile order we would wind up with the annotations
-           * in reverse order in `sym.annotations`. Instead we just read them out the
-           * other way around, for now. TODO: sym.addAnnotation add to the end?
-           */
-          sym.setAnnotations(sym.annotations ::: annots.toList)
+          val numAnnots = u2()
+          numAnnots times {
+            parseAnnotation(u2()).foreach(addUniqueAnnotation(sym, _))
+          }
 
         // TODO 1: parse runtime visible annotations on parameters
         // case tpnme.RuntimeParamAnnotationATTR
@@ -891,7 +893,7 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
             // in the output directories of scalac.
             //
             // References:
-            // https://issues.scala-lang.org/browse/SI-2689
+            // https://github.com/scala/bug/issues/2689
             // https://github.com/scala/scala/commit/7315339782f6e19ddd6199768352a91ef66eb27d
             // https://github.com/scala-ide/scala-ide/commit/786ea5d4dc44065379a05eb3ac65d37f8948c05d
             //
@@ -915,6 +917,13 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
           }
           in.skip(attrLen)
 
+        case tpnme.PermittedSubclassesATTR =>
+          sym.setFlag(SEALED)
+          val permitted = List.fill(u2().toInt)(pool.getClassSymbol(u2()))
+          // enum children are its enum fields, so don't register subclasses (which are listed as permitted)
+          if (!sym.hasJavaEnumFlag)
+            sym.updateAttachment(new PermittedSubclassSymbols(permitted, declared = true))
+
         case _ =>
           in.skip(attrLen)
       }
@@ -924,16 +933,16 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
      * Parse the "Exceptions" attribute which denotes the exceptions
      * thrown by a method.
      */
-    def parseExceptions(len: Int, completer: JavaTypeCompleter): Unit = {
+    def parseExceptions(@unused len: Int, completer: JavaTypeCompleter): Unit = {
       val nClasses = u2()
-      for (n <- 0 until nClasses) {
+      for (_ <- 0 until nClasses) {
         // FIXME: this performs an equivalent of getExceptionTypes instead of getGenericExceptionTypes (scala/bug#7065)
         val cls = pool.getClassName(u2())
         completer.exceptions ::= cls
       }
     }
     // begin parseAttributes
-    for (i <- 0 until u2()) parseAttribute()
+    u2() times parseAttribute()
   }
 
 
@@ -967,15 +976,16 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
       case ARRAY_TAG  =>
         val arr = new ArrayBuffer[ClassfileAnnotArg]()
         var hasError = false
-        for (i <- 0 until index)
+        index times {
           parseAnnotArg() match {
             case Some(c) => arr += c
             case None => hasError = true
           }
+        }
         if (hasError) None
         else Some(ArrayAnnotArg(arr.toArray))
       case ANNOTATION_TAG =>
-        parseAnnotation(index) map (NestedAnnotArg(_))
+        parseAnnotation(index).map(NestedAnnotArg(_))
     }
   }
 
@@ -989,7 +999,7 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
     val nargs = u2()
     val nvpairs = new ListBuffer[(Name, ClassfileAnnotArg)]
     var hasError = false
-    for (i <- 0 until nargs) {
+    nargs times {
       val name = readName()
       parseAnnotArg() match {
         case Some(c) => nvpairs += ((name, c))
@@ -1016,7 +1026,7 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
     * if the corresponding flag is set in `flags`.
     */
   def addJavaFlagsAnnotations(sym: Symbol, flags: JavaAccFlags): Unit =
-    flags.toScalaAnnotations(symbolTable) foreach (ann => sym.addAnnotation(ann))
+    flags.toScalaAnnotations(symbolTable).foreach(sym.addAnnotation(_))
 
   /** Enter own inner classes in the right scope. It needs the scopes to be set up,
    *  and implicitly current class' superclasses.
@@ -1102,8 +1112,6 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
 
     var innersStart = -1
     var runtimeAnnotStart = -1
-    var TASTYAttrStart = -1
-    var TASTYAttrLen = -1
 
     val numAttrs = u2()
     var i = 0
@@ -1117,13 +1125,8 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
         case tpnme.ScalaATTR =>
           isScalaRaw = true
           i = numAttrs
-        case tpnme.TASTYATTR if !YtastyReader =>
-          MissingRequirementError.signal(s"Add -Ytasty-reader to scalac options to parse the TASTy in $file")
         case tpnme.TASTYATTR =>
-          isTASTY = true
-          TASTYAttrLen = attrLen
-          TASTYAttrStart = in.bp
-          i = numAttrs
+          MissingRequirementError.notFound(s"TASTy file for associated class file $file")
         case tpnme.InnerClassesATTR =>
           innersStart = in.bp
         case tpnme.RuntimeAnnotationATTR =>
@@ -1134,13 +1137,6 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
       in.skip(attrLen)
       i += 1
     }
-
-    // To understand the situation, it's helpful to know that:
-    // - Scalac emits the `ScalaSignature` attribute for classfiles with pickled information
-    // and the `Scala` attribute for everything else.
-    // - Dotty emits the `TASTY` attribute for classfiles with pickled information
-    // and the `Scala` attribute for _every_ classfile.
-    isScalaRaw &= !isTASTY
 
     if (isScala) {
       def parseScalaSigBytes(): Array[Byte] = {
@@ -1179,7 +1175,7 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
 
         case ARRAY_TAG =>
           val num = u2()
-          for (i <- 0 until num) skipAnnotArg()
+          num times skipAnnotArg()
 
         case ANNOTATION_TAG =>
           in.skip(2) // type
@@ -1188,7 +1184,7 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
 
       def skipAnnotArgs() = {
         val numArgs = u2()
-        for (i <- 0 until numArgs) {
+        numArgs times {
           in.skip(2)
           skipAnnotArg()
         }
@@ -1210,7 +1206,7 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
           case LongSigTpe =>
             checkScalaSigAnnotArg()
             bytes = parseScalaLongSigBytes()
-          case t =>
+          case _ =>
             skipAnnotArgs()
         }
         i += 1
@@ -1219,69 +1215,10 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
       AnyRefClass // Force scala.AnyRef, otherwise we get "error: Symbol AnyRef is missing from the classpath"
       assert(bytes != null, s"No Scala(Long)Signature annotation in classfile with ScalaSignature attribute: $clazz")
       unpickler.unpickle(bytes, 0, clazz, staticModule, file.name)
-    } else if (isTASTY) {
-
-      def parseTASTYFile(): Array[Byte] = file.underlyingSource match { // TODO: simplify when #3552 is fixed
-        case None =>
-          reporter.error(NoPosition, "Could not load TASTY from .tasty for virtual file " + file)
-          Array.empty
-        case Some(jar: ZipArchive) => // We are in a jar
-          val cl = new URLClassLoader(Array(jar.toURL), /*parent =*/ null)
-          val path = file.path.stripSuffix(".class") + ".tasty"
-          val stream = cl.getResourceAsStream(path)
-          if (stream != null) {
-            val tastyOutStream = new ByteArrayOutputStream()
-            val buffer = new Array[Byte](1024)
-            var read = stream.read(buffer, 0, buffer.length)
-            while (read != -1) {
-              tastyOutStream.write(buffer, 0, read)
-              read = stream.read(buffer, 0, buffer.length)
-            }
-            tastyOutStream.flush()
-            tastyOutStream.toByteArray
-          } else {
-            reporter.error(NoPosition, s"Could not find $path in $jar")
-            Array.empty
-          }
-        case _ =>
-          val plainFile = new PlainFile(io.File(file.path).changeExtension("tasty"))
-          if (plainFile.exists) plainFile.toByteArray
-          else {
-            reporter.error(NoPosition, "Could not find " + plainFile)
-            Array.empty
-          }
-      }
-
-      def parseTASTYBytes(): Array[Byte] = {
-        assert(TASTYAttrLen == TASTYUUIDLength, "TASTY Attribute is not a UUID")
-        assert(TASTYAttrStart != -1, "no TASTY Annotation position")
-        in.bp = TASTYAttrStart
-        val TASTY = in.nextBytes(TASTYUUIDLength)
-        val TASTYBytes = parseTASTYFile()
-        if (TASTYBytes.isEmpty) {
-          reporter.error(NoPosition, s"No Tasty file found for classfile $file with TASTY Attribute")
-        }
-        val reader = new TastyReader(TASTY, 0, TASTYUUIDLength)
-        val expectedUUID = new UUID(reader.readUncompressedLong(), reader.readUncompressedLong())
-        val tastyUUID = new TastyHeaderUnpickler(TASTYBytes).readHeader()
-        if (expectedUUID != tastyUUID) {
-          loaders.warning(
-            NoPosition,
-            s"$file is out of sync with its TASTy file. Loaded TASTy file. Try cleaning the project to fix this issue",
-            WarningCategory.Other,
-            clazz.fullNameString
-          )
-        }
-        TASTYBytes
-      }
-
-      AnyRefClass // Force scala.AnyRef, otherwise we get "error: Symbol AnyRef is missing from the classpath"
-      val bytes = parseTASTYBytes()
-      TastyUnpickler.unpickle(TastyUniverse)(bytes, clazz, staticModule, file.path.stripSuffix(".class") + ".tasty")
     } else if (!isScalaRaw && innersStart != -1) {
       in.bp = innersStart
       val entries = u2()
-      for (_ <- 0 until entries) {
+      entries times {
         val innerIndex, outerIndex, nameIndex = u2()
         val jflags = readInnerClassFlags()
         if (innerIndex != 0 && outerIndex != 0 && nameIndex != 0)
@@ -1355,6 +1292,7 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
       sym setInfo createFromClonedSymbols(alias.initialize.typeParams, alias.tpe)(typeFun)
     }
   }
+  // on JDK 21+, `names` may include nulls, as per scala/bug#12783
   private class ParamNames(val names: Array[NameOrString], val access: Array[Int]) {
     assert(names.length == access.length, "Require as many names as access")
     def length = names.length
@@ -1365,9 +1303,9 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
     var paramNames: ParamNames = _
     var exceptions: List[NameOrString] = Nil
   }
-  private final class ClassTypeCompleter(name: Name, jflags: JavaAccFlags, parent: NameOrString, ifaces: List[NameOrString]) extends JavaTypeCompleter {
+  private final class ClassTypeCompleter(@unused name: Name, @unused jflags: JavaAccFlags, parent: NameOrString, ifaces: List[NameOrString]) extends JavaTypeCompleter {
     override def complete(sym: symbolTable.Symbol): Unit = {
-      val info = if (sig != null) sigToType(sym, sig) else {
+      val info = sigToTypeOpt(sym, sig).getOrElse {
         val superTpe = if (parent == null) definitions.AnyClass.tpe_* else getClassSymbol(parent.value).tpe_*
         val superTpe1 = if (superTpe == ObjectTpeJava) ObjectTpe else superTpe
         val ifacesTypes = ifaces.filterNot(_ eq null).map(x => getClassSymbol(x.value).tpe_*)
@@ -1383,7 +1321,7 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
     override def complete(sym: symbolTable.Symbol): Unit = {
       def descriptorInfo = sigToType(sym, descriptor)
       val hasOuterParam = (name == nme.CONSTRUCTOR) && (descriptorInfo match {
-        case MethodType(params, restpe) =>
+        case MethodType(params, _) =>
           // if this is a non-static inner class, remove the explicit outer parameter
           innerClasses getEntry currentClass match {
             case Some(entry) if !entry.jflags.isStatic =>
@@ -1402,25 +1340,25 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
         case _ => false
       })
 
-      val info = if (sig != null) {
-        sigToType(sym, sig)
-      } else if (name == nme.CONSTRUCTOR) {
-        descriptorInfo match {
-          case MethodType(params, restpe) =>
-            val paramsNoOuter = if (hasOuterParam) params.tail else params
-            val newParams = paramsNoOuter match {
-              case (init :+ tail) if jflags.isSynthetic =>
-                // scala/bug#7455 strip trailing dummy argument ("access constructor tag") from synthetic constructors which
-                // are added when an inner class needs to access a private constructor.
-                init
-              case _ =>
-                paramsNoOuter
-            }
-            MethodType(newParams, clazz.tpe)
-          case info => info
+      val info = sigToTypeOpt(sym, sig).getOrElse {
+        if (name == nme.CONSTRUCTOR) {
+          descriptorInfo match {
+            case MethodType(params, _) =>
+              val paramsNoOuter = if (hasOuterParam) params.tail else params
+              val newParams = paramsNoOuter match {
+                case init :+ _ if jflags.isSynthetic =>
+                  // scala/bug#7455 strip trailing dummy argument ("access constructor tag") from synthetic constructors which
+                  // are added when an inner class needs to access a private constructor.
+                  init
+                case _ =>
+                  paramsNoOuter
+              }
+              MethodType(newParams, clazz.tpe)
+            case info => info
+          }
+        } else {
+          descriptorInfo
         }
-      } else {
-        descriptorInfo
       }
       if (constant != null) {
         val c1 = convertTo(constant, info.resultType)
@@ -1455,8 +1393,10 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
             case (i, param) =>
               val isSynthetic = (paramNames.access(i) & ACC_SYNTHETIC) != 0
               if (!isSynthetic) {
-                param.name = paramNames.names(i).name.toTermName.encode
                 param.resetFlag(SYNTHETIC)
+                val nameOrString = paramNames.names(i)
+                if (nameOrString != null)
+                  param.name = nameOrString.name.toTermName.encode
               }
           }
           // there's not anything we can do, but it's slightly worrisome
@@ -1501,4 +1441,53 @@ abstract class ClassfileParser(reader: ReusableInstance[ReusableDataReader]) {
 
   protected def getScope(flags: JavaAccFlags): Scope =
     if (flags.isStatic) staticScope else instanceScope
+
+  // Append annotation. For Java deprecation, prefer an annotation with values (since, etc).
+  private def addUniqueAnnotation(symbol: Symbol, annot0: AnnotationInfo): symbol.type = {
+    val annot = annot0.symbol match {
+      case sym: StubSymbol if sym.name.toString == JdkValueBasedAnnotCtSymName => AnnotationInfo(JdkValueBasedAnnot.tpe, Nil, Nil)
+      case _ => annot0
+    }
+    // Silently ignore missing annotation classes like javac and Scala 3
+    def skipAnnot =
+      annot.symbol match {
+        case sym: StubSymbol =>
+          if (settings.isDeveloper || (settings.debug.value && !sym.name.startsWith("jdk.internal."))) {
+            val msg = s"Error while parsing annotations in $file: annotation class ${sym.name} not present on classpath"
+            loaders.warning(NoPosition, msg, WarningCategory.OtherDebug, clazz.fullNameString)
+          }
+          true
+        case _ => false
+      }
+    if (annot.symbol == JavaDeprecatedAttr) {
+      def ensureDepr(sym: Symbol): sym.type = {
+        if (sym.hasAnnotation(JavaDeprecatedAttr))
+          if (List(0, 1).exists(annot.constantAtIndex(_).isDefined))
+            sym.setAnnotations {
+              def drop(cur: AnnotationInfo): Boolean = cur.symbol == JavaDeprecatedAttr
+              sym.annotations.foldRight(annot :: Nil)((a, all) => if (drop(a)) all else a :: all)
+            }
+          else sym
+        else sym.addAnnotation(annot)
+      }
+      if (symbol == clazz)
+        ensureDepr(staticModule)
+      ensureDepr(symbol)
+    }
+    else if (skipAnnot)
+      symbol
+    else
+      symbol.addAnnotation(annot)
+  }
+}
+object ClassfileParser {
+  private implicit class GoodTimes(private val n: Int) extends AnyVal {
+    def times(body: => Unit): Unit = {
+      var i = n
+      while (i > 0) {
+        body
+        i -= 1
+      }
+    }
+  }
 }

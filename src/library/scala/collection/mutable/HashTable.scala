@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -35,8 +35,8 @@ import java.lang.Integer
  *
  *  @tparam A     type of the elements contained in this hash table.
  */
-// Was an abstract class, but to simplify the upgrade of the parallel collections I’ve made it a trait
-private[collection] /*abstract class*/ trait HashTable[A, B, Entry >: Null <: HashEntry[A, Entry]] extends HashTable.HashUtils[A] {
+// Not used in the standard library, but used in scala-parallel-collections
+private[collection] trait HashTable[A, B, Entry >: Null <: HashEntry[A, Entry]] extends HashTable.HashUtils[A] {
   // Replacing Entry type parameter by abstract type member here allows to not expose to public
   // implementation-specific entry classes such as `DefaultEntry` or `LinkedEntry`.
   // However, I'm afraid it's too late now for such breaking change.
@@ -128,7 +128,7 @@ private[collection] /*abstract class*/ trait HashTable[A, B, Entry >: Null <: Ha
     foreachEntry(writeEntry)
   }
 
-  /** Find entry with given key in table, null if not found.
+  /** Finds entry with given key in table, null if not found.
    */
   final def findEntry(key: A): Entry =
     findEntry0(key, index(elemHashCode(key)))
@@ -139,7 +139,7 @@ private[collection] /*abstract class*/ trait HashTable[A, B, Entry >: Null <: Ha
     e
   }
 
-  /** Add entry to table
+  /** Adds entry to table
    *  pre: no entry with same key exists
    */
   protected[collection] final def addEntry(e: Entry): Unit = {
@@ -155,7 +155,7 @@ private[collection] /*abstract class*/ trait HashTable[A, B, Entry >: Null <: Ha
       resize(2 * table.length)
   }
 
-  /** Find entry with given key in table, or add new one if not found.
+  /** Finds entry with given key in table, or adds new one if not found.
    *  May be somewhat faster then `findEntry`/`addEntry` pair as it
    *  computes entry's hash index only once.
    *  Returns entry found in table or null.
@@ -173,12 +173,12 @@ private[collection] /*abstract class*/ trait HashTable[A, B, Entry >: Null <: Ha
    */
   def createNewEntry(key: A, value: B): Entry
 
-  /** Remove entry from table if present.
+  /** Removes entry from table if present.
    */
   final def removeEntry(key: A) : Entry = {
     removeEntry0(key, index(elemHashCode(key)))
   }
-  /** Remove entry from table if present.
+  /** Removes entry from table if present.
    */
   private[collection] final def removeEntry0(key: A, h: Int) : Entry = {
     var e = table(h).asInstanceOf[Entry]
@@ -244,7 +244,7 @@ private[collection] /*abstract class*/ trait HashTable[A, B, Entry >: Null <: Ha
     }
   }
 
-  /** Remove all entries from table
+  /** Removes all entries from table
    */
   def clearTable(): Unit = {
     var i = table.length - 1
@@ -359,7 +359,7 @@ private[collection] /*abstract class*/ trait HashTable[A, B, Entry >: Null <: Ha
 
   /**
     * Note: we take the most significant bits of the hashcode, not the lower ones
-    * this is of crucial importance when populating the table in parallel
+    * this is of crucial importance when populating the table in parallel.
     */
   protected[collection] final def index(hcode: Int): Int = {
     val ones = table.length - 1

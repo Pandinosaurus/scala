@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,14 +14,14 @@ package scala.tools
 package reflect
 
 import scala.reflect.reify.Taggers
-import scala.tools.nsc.typechecker.{ Analyzer, Macros }
+import scala.tools.nsc.typechecker.{ AbstractAnalyzer, Macros }
 import scala.reflect.runtime.Macros.currentMirror
 import scala.reflect.quasiquotes.{ Quasiquotes => QuasiquoteImpls }
 
 /** Optimizes system macro expansions by hardwiring them directly to their implementations
  *  bypassing standard reflective load and invoke to avoid the overhead of Java/Scala reflection.
  */
-class FastTrack[MacrosAndAnalyzer <: Macros with Analyzer](val macros: MacrosAndAnalyzer) {
+class FastTrack[MacrosAndAnalyzer <: Macros with AbstractAnalyzer](val macros: MacrosAndAnalyzer) {
 
   import macros._
   import global._
@@ -61,10 +61,10 @@ class FastTrack[MacrosAndAnalyzer <: Macros with Analyzer](val macros: MacrosAnd
       makeBlackbox(        materializeClassTag) { case Applied(_, ttag :: Nil, _)                 => _.materializeClassTag(ttag.tpe) },
       makeBlackbox(     materializeWeakTypeTag) { case Applied(_, ttag :: Nil, (u :: _) :: _)     => _.materializeTypeTag(u, EmptyTree, ttag.tpe, concrete = false) },
       makeBlackbox(         materializeTypeTag) { case Applied(_, ttag :: Nil, (u :: _) :: _)     => _.materializeTypeTag(u, EmptyTree, ttag.tpe, concrete = true) },
-      makeBlackbox(           ApiUniverseReify) { case Applied(_, ttag :: Nil, (expr :: _) :: _)  => c => c.materializeExpr(c.prefix.tree, EmptyTree, expr) },
-      makeBlackbox(            StringContext_f) { case _                                          => _.interpolateF },
-      makeBlackbox(            StringContext_s) { case _                                          => _.interpolateS },
-      makeBlackbox(            StringContext_raw) { case _                                        => _.interpolateRaw },
+      makeBlackbox(           ApiUniverseReify) { case Applied(_, _ :: Nil, (expr :: _) :: _)     => c => c.materializeExpr(c.prefix.tree, EmptyTree, expr) },
+      makeWhitebox(            StringContext_f) { case _                                          => _.interpolateF },
+      makeWhitebox(            StringContext_s) { case _                                          => _.interpolateS },
+      makeWhitebox(            StringContext_raw) { case _                                        => _.interpolateRaw },
       makeBlackbox(ReflectRuntimeCurrentMirror) { case _                                          => c => currentMirror(c).tree },
       makeWhitebox(  QuasiquoteClass_api_apply) { case _                                          => _.expandQuasiquote },
       makeWhitebox(QuasiquoteClass_api_unapply) { case _                                          => _.expandQuasiquote }

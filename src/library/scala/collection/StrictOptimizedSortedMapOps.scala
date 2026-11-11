@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -33,7 +33,7 @@ trait StrictOptimizedSortedMapOps[K, +V, +CC[X, Y] <: Map[X, Y] with SortedMapOp
     strictOptimizedFlatMap(sortedMapFactory.newBuilder, f)
 
   override def concat[V2 >: V](xs: IterableOnce[(K, V2)]): CC[K, V2] =
-    strictOptimizedConcat(xs, sortedMapFactory.newBuilder(ordering))
+    strictOptimizedConcat(xs, sortedMapFactory.newBuilder(using ordering))
 
   override def collect[K2, V2](pf: PartialFunction[(K, V), (K2, V2)])(implicit @implicitNotFound(SortedMapOps.ordMsg) ordering: Ordering[K2]): CC[K2, V2] =
     strictOptimizedCollect(sortedMapFactory.newBuilder, pf)

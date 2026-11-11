@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -28,5 +28,5 @@ trait Instance extends Spec {
   def residualArgs        = parsed.residualArgs     // only args which were not options or args to options
 
   type OptionMagic = Opt.Instance
-  protected implicit def optionMagicAdditions(name: String) = new Opt.Instance(programInfo, parsed, name)
+  protected implicit def optionMagicAdditions(name: String): Opt.Instance = new Opt.Instance(programInfo, parsed, name)
 }

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,6 +14,7 @@ package scala
 
 import java.lang.{ StringBuilder => JLSBuilder }
 import scala.annotation.tailrec
+import scala.collection.mutable.ArrayBuilder
 
 /** This class provides the basic mechanism to do String Interpolation.
  * String Interpolation allows users
@@ -56,7 +57,7 @@ import scala.annotation.tailrec
  */
 case class StringContext(parts: String*) {
 
-  import StringContext.{checkLengths => scCheckLengths, glob, standardInterpolator => scStandardInterpolator}
+  import StringContext.{checkLengths => scCheckLengths, glob, processEscapes, standardInterpolator => scStandardInterpolator}
 
   @deprecated("use same-named method on StringContext companion object", "2.13.0")
   def checkLengths(args: scala.collection.Seq[Any]): Unit = scCheckLengths(args, parts)
@@ -87,7 +88,7 @@ case class StringContext(parts: String*) {
    *          if a `parts` string contains a backslash (`\`) character
    *          that does not start a valid escape sequence.
    *  @note   The Scala compiler may replace a call to this method with an equivalent, but more efficient,
-   *          use of a StringBuilder.
+   *          use of a `StringBuilder`.
    */
   def s(args: Any*): String = macro ??? // fasttracked to scala.tools.reflect.FastStringInterpolator::interpolateS
   object s {
@@ -126,7 +127,7 @@ case class StringContext(parts: String*) {
      *  Here, we use the `TimeSplitter` regex within the `s` matcher, further splitting the
      *  matched string "10.50" into its constituent parts
      */
-    def unapplySeq(s: String): Option[Seq[String]] = glob(parts, s)
+    def unapplySeq(s: String): Option[Seq[String]] = glob(parts.map(processEscapes), s)
   }
   /** The raw string interpolator.
    *
@@ -148,9 +149,9 @@ case class StringContext(parts: String*) {
    *  @param `args` The arguments to be inserted into the resulting string.
    *  @throws IllegalArgumentException
    *          if the number of `parts` in the enclosing `StringContext` does not exceed
-   *          the number of arguments `arg` by exactly 1.
+   *          the number of arguments `args` by exactly 1.
    *  @note   The Scala compiler may replace a call to this method with an equivalent, but more efficient,
-   *          use of a StringBuilder.
+   *          use of a `StringBuilder`.
    */
   def raw(args: Any*): String = macro ??? // fasttracked to scala.tools.reflect.FastStringInterpolator::interpolateRaw
 
@@ -219,32 +220,15 @@ object StringContext {
     val nameLength = input.length
     // The final pattern is as long as all the chunks, separated by 1-character
     // glob-wildcard placeholders
-    val patternLength = {
-      var n = numWildcards
-      for(chunk <- patternChunks) {
-        n += chunk.length
-      }
-      n
-    }
+    val patternLength = patternChunks.iterator.map(_.length).sum + numWildcards
 
     // Convert the input pattern chunks into a single sequence of shorts; each
     // non-negative short represents a character, while -1 represents a glob wildcard
     val pattern = {
-      val arr = new Array[Short](patternLength)
-      var i = 0
-      var first = true
-      for(chunk <- patternChunks) {
-        if (first) first = false
-        else {
-          arr(i) = -1
-          i += 1
-        }
-        for(c <- chunk) {
-          arr(i) = c.toShort
-          i += 1
-        }
-      }
-      arr
+      val b = new ArrayBuilder.ofShort ; b.sizeHint(patternLength)
+      patternChunks.head.foreach(c => b.addOne(c.toShort))
+      patternChunks.tail.foreach { s => b.addOne(-1) ; s.foreach(c => b.addOne(c.toShort)) }
+      b.result()
     }
 
     // Lookup table for each character in the pattern to check whether or not
@@ -252,20 +236,15 @@ object StringContext {
     // glob wildcard it represents, while -1 means it doesn't represent any
     val matchIndices = {
       val arr = Array.fill(patternLength + 1)(-1)
-      var i = 0
-      var j = 0
-      for(chunk <- patternChunks) {
-        if (j < numWildcards) {
-          i += chunk.length
-          arr(i) = j
-          i += 1
-          j += 1
-        }
+      patternChunks.init.zipWithIndex.foldLeft(0) { case (ttl, (chunk, i)) =>
+        val sum = ttl + chunk.length
+        arr(sum) = i
+        sum + 1
       }
       arr
     }
 
-    while(patternIndex < patternLength || inputIndex < nameLength) {
+    while (patternIndex < patternLength || inputIndex < nameLength) {
       matchIndices(patternIndex) match {
         case -1 => // do nothing
         case n =>
@@ -324,7 +303,7 @@ object StringContext {
   class InvalidEscapeException(str: String, val index: Int) extends IllegalArgumentException(
     s"""invalid escape ${
       require(index >= 0 && index < str.length)
-      val ok = s"""[\\b, \\t, \\n, \\f, \\r, \\\\, \\", \\', \\uxxxx]"""
+      val ok = s"""[\\b, \\t, \\n, \\f, \\r, \\s, \\\\, \\", \\', \\uxxxx]"""
       if (index == str.length - 1) "at terminal" else s"'\\${str(index + 1)}' not one of $ok at"
     } index $index in "$str". Use \\\\ for literal \\."""
   )
@@ -364,7 +343,7 @@ object StringContext {
 
   /** Expands standard Scala escape sequences in a string.
    *  Escape sequences are:
-   *   control: `\b`, `\t`, `\n`, `\f`, `\r`
+   *   control: `\b`, `\t`, `\n`, `\f`, `\r`, `\s`
    *   escape:  `\\`, `\"`, `\'`
    *
    *  @param  str  A string that may contain escape sequences
@@ -375,7 +354,7 @@ object StringContext {
 
   /** Expands standard Scala escape sequences in a string.
    *  Escape sequences are:
-   *   control: `\b`, `\t`, `\n`, `\f`, `\r`
+   *   control: `\b`, `\t`, `\n`, `\f`, `\r`, `\s`
    *   escape:  `\\`, `\"`, `\'`
    *
    *  @param  str  A string that may contain escape sequences
@@ -411,6 +390,7 @@ object StringContext {
             case 'n'  => '\n'
             case 'f'  => '\f'
             case 'r'  => '\r'
+            case 's'  => ' '
             case '"'  => '"'
             case '\'' => '\''
             case '\\' => '\\'
@@ -430,7 +410,7 @@ object StringContext {
     }
 
   /** replace Unicode escapes starting at index `backslash` which must be the
-   *  index of the first index of a backslash character followed by a `u`
+   *  index of the first index of a backslash character followed by a `u`.
    *  character
    *
    * If a backslash is followed by one or more `u` characters and there is

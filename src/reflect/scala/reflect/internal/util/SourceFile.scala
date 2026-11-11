@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -56,7 +56,23 @@ abstract class SourceFile {
   final def skipWhitespace(offset: Int): Int =
     if (content(offset).isWhitespace) skipWhitespace(offset + 1) else offset
 
-  def identifier(pos: Position): Option[String] = None
+  def identFrom(pos: Position): Option[String] =
+    Option.when(pos.isDefined && pos.source == this && pos.point != -1) {
+      def isOK(c: Char) = isIdentifierPart(c) || isOperatorPart(c)
+      new String(content drop pos.point takeWhile isOK)
+    }
+
+  def sourceAt(pos: Position): String =
+    if (pos.start < pos.end) new String(content.slice(pos.start, pos.end)) else ""
+
+  def indexWhere(p: Char => Boolean, start: Int, step: Int = 1): Int = {
+    var i = start
+    while (i >= 0 && i < content.length) {
+      if (p(content(i))) return i
+      i += step
+    }
+    -1
+  }
 
   /** An iterator over the lines between `start` and `end`.
     *
@@ -124,6 +140,10 @@ class ScriptSourceFile(underlying: BatchSourceFile, content: Array[Char], overri
     else pos withSource underlying withShift start
 }
 
+/* See PerRunReporting.repSrc */
+class ReplBatchSourceFile(filename: String, content: String, val parserSource: BatchSourceFile)
+  extends BatchSourceFile(filename, content)
+
 /** a file whose contents do not change over time */
 class BatchSourceFile(val file : AbstractFile, content0: Array[Char]) extends SourceFile {
   def this(_file: AbstractFile)                 = this(_file, _file.toCharArray)
@@ -144,14 +164,6 @@ class BatchSourceFile(val file : AbstractFile, content0: Array[Char]) extends So
   def lineCount = lineIndices.length - 1
   def start = 0
   def isSelfContained = true
-
-  override def identifier(pos: Position) =
-    if (pos.isDefined && pos.source == this && pos.point != -1) {
-      def isOK(c: Char) = isIdentifierPart(c) || isOperatorPart(c)
-      Some(new String(content drop pos.point takeWhile isOK))
-    } else {
-      super.identifier(pos)
-    }
 
   private def charAtIsEOL(idx: Int)(p: Char => Boolean) = {
     // don't identify the CR in CR LF as a line break, since LF will do.
@@ -201,7 +213,7 @@ class BatchSourceFile(val file : AbstractFile, content0: Array[Char]) extends So
     if (lines.isEmpty || offset < lines.head || offset >= lines.last) throw new IndexOutOfBoundsException(offset.toString)
     @tailrec
     def findLine(lo: Int, hi: Int, mid: Int): Int = (
-      if (mid < lo || hi < mid) mid // minimal sanity check - as written this easily went into infinite loopyland
+      if (mid < lo || hi < mid) mid // minimal confidence check - as written this easily went into infinite loopyland
       else if (offset < lines(mid)) findLine(lo, mid - 1, (lo + mid - 1) / 2)
       else if (offset >= lines(mid + 1)) findLine(mid + 1, hi, (mid + 1 + hi) / 2)
       else mid
@@ -219,8 +231,8 @@ class BatchSourceFile(val file : AbstractFile, content0: Array[Char]) extends So
 
 
   override def equals(that : Any) = that match {
-    case that : BatchSourceFile => file.path == that.file.path && start == that.start
-    case _ => false
+    case that: BatchSourceFile if !file.isVirtual && !that.file.isVirtual => file.path == that.file.path && start == that.start
+    case _ => super.equals(that)
   }
-  override def hashCode = file.path.## + start.##
+  override def hashCode = if (!file.isVirtual) file.path.## + start.## else super.hashCode()
 }

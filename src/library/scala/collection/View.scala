@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -164,7 +164,7 @@ object View extends IterableFactory[View] {
 
   @SerialVersionUID(3L)
   class LeftPartitionMapped[A, A1, A2](underlying: SomeIterableOps[A], f: A => Either[A1, A2]) extends AbstractView[A1] {
-    def iterator = new AbstractIterator[A1] {
+    def iterator: AbstractIterator[A1] = new AbstractIterator[A1] {
       private[this] val self = underlying.iterator
       private[this] var hd: A1 = _
       private[this] var hdDefined: Boolean = false
@@ -189,7 +189,7 @@ object View extends IterableFactory[View] {
 
   @SerialVersionUID(3L)
   class RightPartitionMapped[A, A1, A2](underlying: SomeIterableOps[A], f: A => Either[A1, A2]) extends AbstractView[A2] {
-      def iterator = new AbstractIterator[A2] {
+      def iterator: AbstractIterator[A2] = new AbstractIterator[A2] {
         private[this] val self = underlying.iterator
         private[this] var hd: A2 = _
         private[this] var hdDefined: Boolean = false

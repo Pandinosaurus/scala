@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -22,7 +22,8 @@ import scala.tools.nsc.Reporting.WarningCategory
 /*
  *  @author  Martin Odersky
  */
-trait DocComments { self: Global =>
+final class DocComments[U <: Global with Singleton](val self: U) {
+  import self._
 
   val cookedDocComments = mutable.HashMap[Symbol, String]()
 
@@ -60,15 +61,21 @@ trait DocComments { self: Global =>
   private def allInheritedOverriddenSymbols(sym: Symbol): List[Symbol] = {
     val getter: Symbol = sym.getter
     val symOrGetter = getter.orElse(sym)
-    if (!symOrGetter.owner.isClass) Nil
-    else symOrGetter.owner.ancestors map (symOrGetter overriddenSymbol _) filter (_ != NoSymbol)
+    if (symOrGetter.owner.isClass)
+      symOrGetter.owner.ancestors
+        .flatMap { ancestor =>
+          symOrGetter.overriddenSymbol(ancestor) match {
+            case NoSymbol => Nil
+            case matching => List(matching)
+          }
+        }
+    else Nil
   }
 
   def fillDocComment(sym: Symbol, comment: DocComment): Unit = {
     docComments(sym) = comment
     comment.defineVariables(sym)
   }
-
 
   def replaceInheritDocToInheritdoc(docStr: String):String  = {
     docStr.replaceAll("""\{@inheritDoc\p{Zs}*\}""", "@inheritdoc")
@@ -185,7 +192,7 @@ trait DocComments { self: Global =>
     }
 
     def mergeSection(srcSec: Option[(Int, Int)], dstSec: Option[(Int, Int)]) = dstSec match {
-      case Some((start, end)) =>
+      case Some((_, end)) =>
         if (end > tocopy) tocopy = end
       case None =>
         srcSec match {
@@ -258,13 +265,11 @@ trait DocComments { self: Global =>
 
         def sectionString(param: String, paramMap: Map[String, (Int, Int)]): String =
           paramMap.get(param) match {
-            case Some(section) =>
-              // Cleanup the section tag and parameter
-              val sectionTextBounds = extractSectionText(parent, section)
-              cleanupSectionText(parent.substring(sectionTextBounds._1, sectionTextBounds._2))
+            case Some(paramSection) =>
+              val (start, end) = extractSectionText(parent, paramSection)
+              cleanupSectionText(parent.substring(start, end)) // Cleanup the section tag and parameter
             case None =>
-              reporter.echo(sym.pos, "The \"" + getSectionHeader + "\" annotation of the " + sym +
-                  " comment contains @inheritdoc, but the corresponding section in the parent is not defined.")
+              reporter.echo(sym.pos, s"""The "$getSectionHeader" annotation of the $sym comment contains @inheritdoc, but the corresponding section in the parent is not defined.""")
               "<invalid inheritdoc annotation>"
           }
 
@@ -294,30 +299,44 @@ trait DocComments { self: Global =>
       out.toString
     }
 
-  /** Maps symbols to the variable -> replacement maps that are defined
-   *  in their doc comments
+  /** Maps symbols to the `variable -> replacement` maps that are defined
+   *  in their doc comments.
    */
-  private val defs = mutable.HashMap[Symbol, Map[String, String]]() withDefaultValue Map()
+  private val defs = mutable.HashMap.empty[Symbol, Map[String, String]].withDefaultValue(Map())
 
-  /** Lookup definition of variable.
+  /** Look up definition of variable.
+   *
+   *  - For a module, try the companion class first.
+   *  - For classes with a self type, search on that basis.
+   *  - Search for definitions on base classes, then on enclosing elements.
    *
    *  @param vble  The variable for which a definition is searched
    *  @param site  The class for which doc comments are generated
    */
   @tailrec
-  final def lookupVariable(vble: String, site: Symbol): Option[String] = site match {
-    case NoSymbol => None
-    case _        =>
-      val searchList =
-        if (site.isModule) site :: site.info.baseClasses
-        else site.info.baseClasses
-
-      searchList collectFirst { case x if defs(x) contains vble => defs(x)(vble) } match {
-        case Some(str) if str startsWith "$" => lookupVariable(str.tail, site)
-        case s @ Some(str)                   => s
-        case None                            => lookupVariable(vble, site.owner)
+  final def lookupVariable(vble: String, site: Symbol): Option[String] = 
+    if (site == NoSymbol) None
+    else {
+      val searchList = {
+        var bases = List.empty[Symbol]
+        def include(k: Symbol): Unit = bases ::= k
+        def examine(k: Symbol): Unit = if (k.exists) {
+          val bs = if (k.hasSelfType) k.typeOfThis.baseClasses else k.baseClasses
+          bs.foreach(include)
+        }
+        if (site.isModule) {
+          include(site)
+          examine(site.companionClass)
+        }
+        examine(site)
+        bases.reverse.distinct
       }
-  }
+      searchList.collectFirst { case x if defs(x).contains(vble) => defs(x)(vble) } match {
+        case Some(str) if str.startsWith("$") => lookupVariable(str.tail, site)
+        case s @ Some(str)                    => defs(site) += vble -> str; s
+        case None                             => lookupVariable(vble, site.owner)
+      }
+    }
 
   /** Expand variable occurrences in string `str`, until a fix point is reached or
    *  an expandLimit is exceeded.
@@ -365,13 +384,13 @@ trait DocComments { self: Global =>
                 case Some(replacement) => replaceWith(replacement)
                 case None              =>
                   val pos = docCommentPos(sym)
-                  val loc = pos withPoint (pos.start + vstart + 1)
+                  val loc = if (pos.isDefined) pos.withPoint(pos.start + vstart + 1) else NoPosition
                   runReporting.warning(loc, s"Variable $vname undefined in comment for $sym in $site", WarningCategory.Scaladoc, sym)
               }
             }
         }
       }
-      if (out.length == 0) str
+      if (out.isEmpty) str
       else {
         out append str.substring(copied)
         expandInternal(out.toString, depth + 1)
@@ -383,7 +402,6 @@ trait DocComments { self: Global =>
     expandInternal(initialStr, 0).replace("""\$""", "$")
   }
 
-  // !!! todo: inherit from Comment?
   case class DocComment(raw: String, pos: Position = NoPosition, codePos: Position = NoPosition) {
 
     /** Returns:
@@ -423,23 +441,20 @@ trait DocComments { self: Global =>
       else {
         val start1 = pos.start + start
         val end1 = pos.start + end
-        pos withStart start1 withPoint start1 withEnd end1
+        pos.copyRange(start1, start1, end1)
       }
 
-    def defineVariables(sym: Symbol) = {
-      val Trim = "(?s)^[\\s&&[^\n\r]]*(.*?)\\s*$".r
-
-      defs(sym) ++= defines.map {
-        str => {
-          val start = skipWhitespace(str, "@define".length)
-          val (key, value) = str.splitAt(skipVariable(str, start))
-          key.drop(start) -> value
+    def defineVariables(sym: Symbol) =
+      defs(sym) ++= defines.map { str =>
+        val start = skipWhitespace(str, "@define".length)
+        str.splitAt(skipVariable(str, start)) match {
+          case (key, DocComment.Trim(value)) => variableName(key.drop(start)) -> value.replaceAll("\\s+\\*+$", "")
+          case x => throw new MatchError(x)
         }
-      } map {
-        case (key, Trim(value)) => variableName(key) -> value.replaceAll("\\s+\\*+$", "")
-        case x                  => throw new MatchError(x)
       }
-    }
+  }
+  object DocComment {
+    private val Trim = "(?s)^[\\s&&[^\n\r]]*(.*?)\\s*$".r
   }
 
   case class UseCase(comment: DocComment, body: String, pos: Position) {
@@ -457,8 +472,8 @@ trait DocComments { self: Global =>
 
       def getSite(name: Name): Type = {
         def findIn(sites: List[Symbol]): Type = sites match {
-          case List() => NoType
-          case site :: sites1 => select(site.thisType, name, findIn(sites1))
+          case site1 :: sites1 => select(site1.thisType, name, findIn(sites1))
+          case _ => NoType
         }
         // Previously, searching was taking place *only* in the current package and in the root package
         // now we're looking for it everywhere in the hierarchy, so we'll be able to link variable expansions like
@@ -543,16 +558,14 @@ trait DocComments { self: Global =>
 
       val substAliases = new TypeMap {
         def apply(tp: Type) = mapOver(tp) match {
-          case tp1 @ TypeRef(pre, sym, args) if (sym.name.length > 1 && sym.name.startChar == '$') =>
+          case tp1 @ TypeRef(_, sym, args) if sym.name.length > 1 && sym.name.startChar == '$' =>
             subst(sym, aliases, aliasExpansions) match {
-              case (TypeRef(pre1, sym1, _), canNormalize) =>
-                val tpe = typeRef(pre1, sym1, args)
+              case (TypeRef(pre, sym, _), canNormalize) =>
+                val tpe = typeRef(pre, sym, args)
                 if (canNormalize) tpe.normalize else tpe
-              case _ =>
-                tp1
+              case _ => tp1
             }
-          case tp1 =>
-            tp1
+          case tp1 => tp1
         }
       }
 
@@ -564,5 +577,5 @@ trait DocComments { self: Global =>
     }
   }
 
-  class ExpansionLimitExceeded(str: String) extends Exception
+  class ExpansionLimitExceeded(str: String) extends Exception(str)
 }

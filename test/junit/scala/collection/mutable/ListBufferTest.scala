@@ -323,4 +323,28 @@ class ListBufferTest {
     test(ArrayBuffer[String]())
     test(ListBuffer[String]())
   }
+
+  @Test
+  def t12796(): Unit = {
+    val b = ListBuffer(1).patchInPlace(1, List(2), 1)
+    assertEquals(2, b.last)
+    assertEquals(List(1, 2), b.toList)
+  }
+
+  @Test
+  def t12796b(): Unit = {
+    val b = ListBuffer(1, 2)
+    b.insertAll(2, List(3))
+    assertEquals(3, b.last)
+    assertEquals(List(1, 2, 3), b.toList)
+  }
+
+  @Test def `sliding throws on mutation`: Unit = {
+    val b = ListBuffer.from(1 to 10)
+    val it = b.sliding(size = 2, step = 1)
+    assertTrue(it.hasNext)
+    assertEquals(2, it.next().size)
+    b(2) = 42
+    assertThrows[java.util.ConcurrentModificationException](it.hasNext)
+  }
 }

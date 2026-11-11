@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -17,7 +17,7 @@ package internal
 import java.security.MessageDigest
 
 import Chars.isOperatorPart
-import scala.annotation.{nowarn, switch}
+import scala.annotation.switch
 import scala.collection.immutable
 import scala.io.Codec
 
@@ -176,7 +176,6 @@ trait StdNames {
   //        the early initializer.
   /** This should be the first trait in the linearization. */
   // abstract class Keywords extends CommonNames {
-  @nowarn("cat=deprecation&msg=early initializers")
   abstract class Keywords extends {
     private[this] val kw = new KeywordSetBuilder
 
@@ -209,7 +208,6 @@ trait StdNames {
     final val RETURNkw: TermName    = kw("return")
     final val SEALEDkw: TermName    = kw("sealed")
     final val SUPERkw: TermName     = kw("super")
-    final val THENkw: TermName      = kw("then")
     final val THISkw: TermName      = kw("this")
     final val THROWkw: TermName     = kw("throw")
     final val TRAITkw: TermName     = kw("trait")
@@ -321,6 +319,7 @@ trait StdNames {
     final val SignatureATTR: NameType              = nameType("Signature")
     final val SourceFileATTR: NameType             = nameType("SourceFile")
     final val SyntheticATTR: NameType              = nameType("Synthetic")
+    final val PermittedSubclassesATTR: NameType    = nameType("PermittedSubclasses")
 
     final val scala_ : NameType = nameType("scala")
 
@@ -421,6 +420,7 @@ trait StdNames {
     def isTraitSetterName(name: Name)       = isSetterName(name) && (name containsName TRAIT_SETTER_SEPARATOR_STRING)
     def isSingletonName(name: Name)         = name endsWith SINGLETON_SUFFIX
     def isModuleName(name: Name)            = name endsWith MODULE_SUFFIX_NAME
+    def isFreshTermName(name: Name)         = name.startsWith(FRESH_TERM_NAME_PREFIX)
 
     /** Is name a variable name? */
     def isVariableName(name: Name): Boolean = {
@@ -551,7 +551,12 @@ trait StdNames {
           case -1  => (name.toTermName, -1)
           case idx => (name.toTermName.take(idx), idx + DEFAULT_GETTER_STRING.length)
         }
-      if (i >= 0) (n, name.encoded.substring(i).toInt) else (n, -1)
+      if (i < 0) (n, -1)
+      else {
+        val j = name.indexOf('$', i) // f$default$7$extension
+        val idx = name.subSequence(i, if (j < 0) name.length else j)
+        (n, idx.toString.toInt)
+      }
     }
 
     def localDummyName(clazz: Symbol): TermName = newTermName(LOCALDUMMY_PREFIX + clazz.name + ">")
@@ -680,10 +685,12 @@ trait StdNames {
     val `enum`: NameType          = nameType("enum")
     val `export`: NameType        = nameType("export")
     val `given`: NameType         = nameType("given")
+    val `then`: NameType          = nameType("then")
 
     // Scala 3 soft keywords
     val infix: NameType           = nameType("infix")
     val open: NameType            = nameType("open")
+    val using: NameType           = nameType("using")
 
     // Compiler utilized names
 
@@ -767,6 +774,7 @@ trait StdNames {
     val copy: NameType                 = nameType("copy")
     val create: NameType               = nameType("create")
     val currentMirror: NameType        = nameType("currentMirror")
+    val curried: NameType              = nameType("curried")
     val delayedInit: NameType          = nameType("delayedInit")
     val delayedInitArg: NameType       = nameType("delayedInit$body")
     val dollarScope: NameType          = nameType("$scope")
@@ -797,7 +805,6 @@ trait StdNames {
     val freshTermName: NameType        = nameType("freshTermName")
     val freshTypeName: NameType        = nameType("freshTypeName")
     val get: NameType                  = nameType("get")
-    val parameterTypes: NameType       = nameType("parameterTypes")
     val hashCode_ : NameType           = nameType("hashCode")
     val head : NameType                = nameType("head")
     val immutable: NameType            = nameType("immutable")
@@ -850,6 +857,7 @@ trait StdNames {
     val notifyAll_ : NameType          = nameType("notifyAll")
     val notify_ : NameType             = nameType("notify")
     val null_ : NameType               = nameType("null")
+    val parameterTypes: NameType       = nameType("parameterTypes")
     val pendingSuperCall: NameType     = nameType("pendingSuperCall")
     val prefix : NameType              = nameType("prefix")
     val productArity: NameType         = nameType("productArity")
@@ -899,6 +907,7 @@ trait StdNames {
     val tpe : NameType                 = nameType("tpe")
     val tree : NameType                = nameType("tree")
     val true_ : NameType               = nameType("true")
+    val tupled: NameType               = nameType("tupled")
     val typedProductIterator: NameType = nameType("typedProductIterator")
     val TypeName: NameType             = nameType("TypeName")
     val typeTagToManifest: NameType    = nameType("typeTagToManifest")
@@ -1126,7 +1135,7 @@ trait StdNames {
     def primitiveMethodName(name: Name): TermName =
       primitiveInfixMethodName(name) match {
         case NO_NAME => primitivePostfixMethodName(name)
-        case name => name
+        case ok_name => ok_name
       }
 
     /** Translate a String into a list of simple TypeNames and TermNames.
@@ -1276,13 +1285,18 @@ trait StdNames {
     final val keywords = kw.result
   }
 
-  // "The identifiers var, yield, and record are restricted identifiers because they are not allowed in some contexts"
-  // A type identifier is an identifier that is not the character sequence var, yield, or record.
-  // An unqualified method identifier is an identifier that is not the character sequence yield.
+  // The identifiers non-sealed, permits, record, sealed, var, and yield are restricted identifiers
+  // because they are not allowed in some contexts.
+  // A type identifier is an identifier that is not the character sequence permits, record, sealed, var, or yield.
+  // An unqualified method identifier is an identifier that is not the character sequence yield. (JLS 3.8)
   class JavaRestrictedIdentifiers {
+    final val PERMITS: TermName = TermName("permits")
     final val RECORD: TermName = TermName("record")
-    final val VAR: TermName = TermName("var")
-    final val YIELD: TermName = TermName("yield")
+    final val SEALED: TermName = TermName("sealed")
+    final val UNSEALED: TermName = TermName("non-sealed")
+    final val NON: TermName = TermName("non")
+    final val VAR: TermName    = TermName("var")
+    final val YIELD: TermName  = TermName("yield")
   }
 
   sealed abstract class SymbolNames {

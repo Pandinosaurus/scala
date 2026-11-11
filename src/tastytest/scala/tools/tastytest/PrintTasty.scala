@@ -1,6 +1,20 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc. dba Akka
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala.tools.tastytest
 
 import scala.util.Try
+import scala.util.Success
+import scala.util.Failure
 
 object PrintTasty extends Script.Command {
 
@@ -16,8 +30,12 @@ object PrintTasty extends Script.Command {
       return 1
     }
     Dotc.processIn { implicit scala3classloader =>
-      val success = printTasty(tasty = args.head).isSuccess
-      if (success) 0 else 1
+      printTasty(tasty = args.head) match {
+        case Success(_) => 0
+        case Failure(err) =>
+          println(red(s"failed to print tasty: $err"))
+          1
+      }
     }
   }
 

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -28,12 +28,12 @@ abstract class Driver {
 
   /** Forward errors to the (current) reporter. */
   protected def scalacError(msg: String): Unit = {
-    reporter.error(FakePos("scalac"), msg + "\n  scalac -help  gives more information")
+    reporter.error(FakePos("scalac"), s"$msg\n  scalac -help gives more information")
   }
 
   /** True to continue compilation. */
   protected def processSettingsHook(): Boolean = {
-    if (settings.version) { reporter echo versionMsg ; false }
+    if (settings.version.value) { reporter echo versionMsg ; false }
     else !reporter.hasErrors
   }
 

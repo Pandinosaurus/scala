@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -38,6 +38,7 @@ object JavaTokens extends ast.parser.CommonTokens {
   final val NATIVE = 53
   final val STRICTFP = 54
   final val THROWS = 56
+  final val UNSEALED = 57   // contextual keyword
 
   /** templates */
   final val INTERFACE = 66

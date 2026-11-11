@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,10 +13,11 @@
 package scala.tools.nsc
 package ast.parser
 
+import scala.annotation.unused
 import scala.collection.mutable
-import symtab.Flags.MUTABLE
 import scala.reflect.internal.util.ListOfNil
 import scala.reflect.internal.util.StringOps.splitWhere
+import symtab.Flags.MUTABLE
 
 /** This class builds instance of `Tree` that represent XML.
  *
@@ -28,7 +29,7 @@ import scala.reflect.internal.util.StringOps.splitWhere
  *
  *  @author  Burak Emir
  */
-abstract class SymbolicXMLBuilder(p: Parsers#Parser, preserveWS: Boolean) {
+abstract class SymbolicXMLBuilder(@unused p: Parsers#Parser, @unused preserveWS: Boolean) {
   val global: Global
   import global._
 
@@ -61,6 +62,7 @@ abstract class SymbolicXMLBuilder(p: Parsers#Parser, preserveWS: Boolean) {
     val _scope: NameType    = nameType("$scope")
     val _tmpscope: NameType = nameType("$tmpscope")
     val _xml: NameType      = nameType("xml")
+    val _toVector           = nameType("toVector")
   }
 
   import xmltypes.{
@@ -68,7 +70,7 @@ abstract class SymbolicXMLBuilder(p: Parsers#Parser, preserveWS: Boolean) {
     _PCData, _PrefixedAttribute, _ProcInstr, _Text, _Unparsed, _UnprefixedAttribute
   }
 
-  import xmlterms.{ _Null, __Elem, __Text, _buf, _md, _plus, _scope, _tmpscope, _xml }
+  import xmlterms.{ _Null, __Elem, __Text, _buf, _md, _plus, _scope, _tmpscope, _xml, _toVector }
 
   /** Attachment for trees deriving from text nodes (Text, CData, entities). Used for coalescing. */
   case class TextAttache(pos: Position, text: String)
@@ -110,7 +112,7 @@ abstract class SymbolicXMLBuilder(p: Parsers#Parser, preserveWS: Boolean) {
   {
     def starArgs =
       if (children.isEmpty) Nil
-      else List(Typed(makeXMLseq(pos, children), wildStar))
+      else List(Typed(makeXMLseq(pos, children, toVector = true), wildStar))
 
     def pat    = Apply(_scala_xml__Elem, List(pre, label, wild, wild) ::: convertToTextPat(children))
     def nonpat = New(_scala_xml_Elem, List(List(pre, label, attrs, scope, if (empty) Literal(Constant(true)) else Literal(Constant(false))) ::: starArgs))
@@ -165,7 +167,7 @@ abstract class SymbolicXMLBuilder(p: Parsers#Parser, preserveWS: Boolean) {
     parseAttributeValue(s, text(pos, _), entityRef(pos, _)) match {
       case Nil      => gen.mkNil
       case t :: Nil => t
-      case ts       => makeXMLseq(pos, ts.toList)
+      case ts       => makeXMLseq(pos, ts, toVector = true)
     }
   }
 
@@ -175,11 +177,12 @@ abstract class SymbolicXMLBuilder(p: Parsers#Parser, preserveWS: Boolean) {
   }
 
   /** could optimize if args.length == 0, args.length == 1 AND args(0) is <: Node. */
-  def makeXMLseq(pos: Position, args: scala.collection.Seq[Tree]) = {
-    val buffer = ValDef(NoMods, _buf, TypeTree(), New(_scala_xml_NodeBuffer, ListOfNil))
-    val applies = args filterNot isEmptyText map (t => Apply(Select(Ident(_buf), _plus), List(t)))
+  def makeXMLseq(pos: Position, args: scala.collection.Seq[Tree], toVector: Boolean) = {
+    val buffer = atPos(pos)(ValDef(NoMods, _buf, TypeTree(), New(_scala_xml_NodeBuffer, ListOfNil)))
+    val applies = args.filterNot(isEmptyText).map(t => atPos(t.pos)(Apply(Select(Ident(_buf), _plus), List(t))))
 
-    atPos(pos)( Block(buffer :: applies.toList, Ident(_buf)) )
+    val res = if (toVector) Select(Ident(_buf), _toVector) else Ident(_buf)
+    atPos(pos)( gen.mkBlock(buffer :: applies.toList ::: List(res)) )
   }
 
   /** Returns (Some(prefix) | None, rest) based on position of ':' */
@@ -190,7 +193,7 @@ abstract class SymbolicXMLBuilder(p: Parsers#Parser, preserveWS: Boolean) {
 
   /** Various node constructions. */
   def group(pos: Position, args: scala.collection.Seq[Tree]): Tree =
-    atPos(pos)( New(_scala_xml_Group, LL(makeXMLseq(pos, args))) )
+    atPos(pos)( New(_scala_xml_Group, LL(makeXMLseq(pos, args, toVector = true))) )
 
   def unparsed(pos: Position, str: String): Tree =
     atPos(pos)( New(_scala_xml_Unparsed, LL(const(str))) )
@@ -271,6 +274,6 @@ abstract class SymbolicXMLBuilder(p: Parsers#Parser, preserveWS: Boolean) {
       args
     )
 
-    atPos(pos.makeTransparent)( Block(nsResult, Block(attrResult, body)) )
+    atPos(pos.makeTransparent)( gen.mkBlock(nsResult :+ gen.mkBlock(attrResult :+ body)) )
   }
 }

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,7 +13,7 @@
 package scala.tools.nsc
 package transform
 
-import scala.annotation.tailrec
+import scala.annotation._
 import scala.reflect.internal.util.ListOfNil
 import symtab.Flags._
 
@@ -24,13 +24,13 @@ import symtab.Flags._
   * The underlying field symbol does not exist until this phase.
   *
   * For `val`s defined in classes, we still emit a field immediately.
-  * TODO: uniformly assign getter symbol to all `ValDef`s, stop using `accessed`.
+  * Would be nice to uniformly assign getter symbol to all `ValDef`s, stop using `accessed`.
   *
   * This phase synthesizes accessors, fields and bitmaps (for lazy or init-checked vals under -Xcheckinit)
   * in the first (closest in the subclassing lattice) subclass (not a trait) of a trait.
   *
   * For lazy vals and modules, we emit accessors that using double-checked locking (DCL) to balance thread safety
-  * and performance. For both lazy vals and modules, the a compute method contains the DCL's slow path.
+  * and performance. For both lazy vals and modules, the compute method contains the DCL's slow path.
   *
   * Local lazy vals do not receive bitmaps, but use a Lazy*Holder that has the volatile init bit and the computed value.
   * See `mkLazyLocalDef`.
@@ -74,10 +74,10 @@ import symtab.Flags._
   * The only change due to overriding is that its value is never written to the field
   * (the overridden val's value is, of course, stored in the field in addition to its side-effect being performed).
   *
-  * TODO: Java 9 support for vals defined in traits. They are currently emitted as final,
-  *       but the write (putfield) to the val does not occur syntactically within the <init> method
-  *       (it's done by the trait setter, which is called from the trait's mixin constructor,
-  *       which is called from the subclass's constructor...)
+  * The field that backs a trait val in a subclass is MUTABLE, so it is not emitted as ACC_FINAL:
+  * the write (putfield) does not occur syntactically within the <init> method (it's done by the trait setter,
+  * which is called from the trait's mixin constructor, which is called from the subclass's constructor...),
+  * and since Java 9 the JVM rejects writes to a final field outside <init>.
   */
 abstract class Fields extends InfoTransform with ast.TreeDSL with TypingTransformers with AccessorSynthesis {
   import global._
@@ -91,7 +91,7 @@ abstract class Fields extends InfoTransform with ast.TreeDSL with TypingTransfor
     if (sym.isJavaDefined || sym.isPackageClass || !sym.isClass) tp
     else synthFieldsAndAccessors(tp)
 
-  // TODO: drop PRESUPER support when we implement trait parameters in 2.13
+  // TODO: drop PRESUPER support when early initializers are removed
   private def excludedAccessorOrFieldByFlags(statSym: Symbol): Boolean = statSym hasFlag PRESUPER
 
   // used for internal communication between info and tree transform of this phase -- not pickled, not in initialflags
@@ -119,16 +119,21 @@ abstract class Fields extends InfoTransform with ast.TreeDSL with TypingTransfor
   }
 
   // TODO: add MIXEDIN (see e.g., `accessed` on `Symbol`)
-  private def setMixedinAccessorFlags(orig: Symbol, cloneInSubclass: Symbol): Unit =
+  private def setMixedinAccessorFlags(@unused orig: Symbol, cloneInSubclass: Symbol): Unit =
     cloneInSubclass setFlag OVERRIDE | NEEDS_TREES resetFlag DEFERRED | SYNTHESIZE_IMPL_IN_SUBCLASS
 
-  private def setFieldFlags(accessor: Symbol, fieldInSubclass: TermSymbol): Unit =
-    fieldInSubclass setFlag (NEEDS_TREES |
-                             PrivateLocal
-                             | (accessor getFlag MUTABLE | LAZY | DEFAULTINIT)
-                             | (if (accessor hasFlag STABLE) 0 else MUTABLE)
-      )
-
+  private def setFieldFlags(accessor: Symbol, fieldInSubclass: TermSymbol): Unit = {
+    // Since initialization is performed (lexically) outside of the constructor (in the trait setter),
+    // we have to make the field mutable starting with classfile format 53
+    // (it was never allowed, but the verifier enforces this now).
+    fieldInSubclass.setFlag(NEEDS_TREES | PrivateLocal | MUTABLE | accessor.getFlag(LAZY | DEFAULTINIT))
+    if (accessor.hasFlag(STABLE)) {
+      // If the field is for an immutable val, make sure it's safely published
+      val isInStaticModule = fieldInSubclass.owner.isModuleClass && fieldInSubclass.owner.sourceModule.isStaticModule
+      if (!isInStaticModule) // the <clinit> lock is enough.
+        fieldInSubclass.owner.primaryConstructor.updateAttachment(ConstructorNeedsFence)
+    }
+  }
 
   def checkAndClearOverriddenTraitSetter(setter: Symbol) = checkAndClear(OVERRIDDEN_TRAIT_SETTER)(setter)
   def checkAndClearNeedsTrees(setter: Symbol) = checkAndClear(NEEDS_TREES)(setter)
@@ -187,8 +192,8 @@ abstract class Fields extends InfoTransform with ast.TreeDSL with TypingTransfor
   // (in traits, getters must also hold annotations that target the underlying field,
   //  because the latter won't be created until the trait is mixed into a class)
   // TODO do bean getters need special treatment to suppress field-targeting annotations in traits?
-  def dropFieldAnnotationsFromGetter(sym: Symbol) =
-    sym setAnnotations (sym.annotations filter AnnotationInfo.mkFilter(GetterTargetClass, defaultRetention = false))
+  def dropFieldAnnotationsFromGetter(sym: Symbol): Unit =
+    sym.setAnnotations(sym.annotations.filter(AnnotationInfo.mkFilter(GetterTargetClass, defaultRetention = false)))
 
   def symbolAnnotationsTargetFieldAndGetter(sym: Symbol): Boolean = sym.isGetter && (sym.isLazy || sym.owner.isTrait)
 
@@ -364,13 +369,13 @@ abstract class Fields extends InfoTransform with ast.TreeDSL with TypingTransfor
 
         if (newDecls.nonEmpty) {
           val allDecls = newScope
-          origDecls foreach allDecls.enter
-          newDecls  foreach allDecls.enter
+          origDecls.foreach(allDecls.enter(_))
+          newDecls .foreach(allDecls.enter(_))
           ClassInfoType(parents, allDecls, clazz)
         } else tp
 
 
-      case tp@ClassInfoType(parents, oldDecls, clazz) if !classNeedsInfoTransform(clazz) => tp
+      case tp@ClassInfoType(_, _, clazz) if !classNeedsInfoTransform(clazz) => tp
 
       // mix in fields & accessors for all mixed in traits
       case tp@ClassInfoType(parents, oldDecls, clazz) =>
@@ -501,7 +506,7 @@ abstract class Fields extends InfoTransform with ast.TreeDSL with TypingTransfor
 
         val newDecls =
           // under -Xcheckinit we generate all kinds of bitmaps, even when there are no lazy vals
-          if (expandedModulesAndLazyVals.isEmpty && mixedInAccessorAndFields.isEmpty && !settings.checkInit)
+          if (expandedModulesAndLazyVals.isEmpty && mixedInAccessorAndFields.isEmpty && !settings.checkInit.value)
             oldDecls.filterNot(omittableField)
           else {
             // must not alter `decls` directly
@@ -675,22 +680,9 @@ abstract class Fields extends InfoTransform with ast.TreeDSL with TypingTransfor
         // trait val/var setter mixed into class
         else fieldAccess(setter) match {
           case NoSymbol => EmptyTree
-          case fieldSel =>
-            if (!fieldSel.hasFlag(MUTABLE)) {
-              // If the field is mutable, it won't be final, so we can write to it in a setter.
-              // If it's not, we still need to initialize it, and make sure it's safely published.
-              // Since initialization is performed (lexically) outside of the constructor (in the trait setter),
-              // we have to make the field mutable starting with classfile format 53
-              // (it was never allowed, but the verifier enforces this now).
-              fieldSel.setFlag(MUTABLE)
-              val isInStaticModule = fieldSel.owner.isModuleClass && fieldSel.owner.sourceModule.isStaticModule
-              if (!isInStaticModule) // the <clinit> lock is enough.
-                fieldSel.owner.primaryConstructor.updateAttachment(ConstructorNeedsFence)
-            }
-
-            afterOwnPhase { // the assign only type checks after our phase (assignment to val)
-              mkAccessor(setter)(Assign(Select(This(clazz), fieldSel), castHack(Ident(setter.firstParam), fieldSel.info)))
-            }
+          case fieldSel => afterOwnPhase { // the assign only type checks after our phase (assignment to val)
+            mkAccessor(setter)(Assign(Select(This(clazz), fieldSel), castHack(Ident(setter.firstParam), fieldSel.info)))
+          }
         }
 
       def moduleAccessorBody(module: Symbol): Tree =

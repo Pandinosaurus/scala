@@ -1,4 +1,4 @@
-// javaVersion: 15+
+//> using jvm 15+
 /* Using `valueOf` is a way to check that the Java string literals were properly
  * parsed, since the parsed value is what the Scala compiler will use when
  * resolving the singleton types
@@ -26,5 +26,16 @@ object Test extends App {
   println(valueOf[TextBlocks.simpleString.type])
   println("====")
   println(valueOf[TextBlocks.emptyString.type])
+  println("====")
+  println(valueOf[TextBlocks.XY.type])
+  println("====")
+  import scala.tools.testkit.AssertUtil.hexdump
+  println(hexdump(valueOf[TextBlocks.Octal.type]).mkString)
+  println("====")
+  println(hexdump(valueOf[TextBlocks.Zero.type].toString).mkString)
+  println("====")
+  println(hexdump(valueOf[TextBlocks.Magic.type].toString).mkString)
+  println("====")
+  println(hexdump(valueOf[TextBlocks.Maxie.type].toString).mkString)
   println("====")
 }

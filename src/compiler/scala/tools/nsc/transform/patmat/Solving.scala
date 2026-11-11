@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -12,9 +12,8 @@
 
 package scala.tools.nsc.transform.patmat
 
-import scala.annotation.tailrec
-import scala.collection.mutable.ArrayBuffer
-import scala.collection.{immutable, mutable}
+import scala.annotation.{tailrec, unused}
+import scala.collection.{immutable, mutable}, mutable.ArrayBuffer
 
 /** Solve pattern matcher exhaustivity problem via DPLL. */
 trait Solving extends Logic {
@@ -166,7 +165,7 @@ trait Solving extends Logic {
           }
         }
 
-        def and(bv: Set[Lit]): Lit = {
+        def and(bv: collection.Set[Lit]): Lit = {
           if (bv.isEmpty) {
             // this case can actually happen because `removeVarEq` could add no constraints
             constTrue
@@ -178,14 +177,14 @@ trait Solving extends Logic {
             // op1 /\ op2 /\ ... /\ opx <==>
             // (o -> op1) /\ (o -> op2) ... (o -> opx) /\ (!op1 \/ !op2 \/... \/ !opx \/ o)
             // (!o \/ op1) /\ (!o \/ op2) ... (!o \/ opx) /\ (!op1 \/ !op2 \/... \/ !opx \/ o)
-            val new_bv = bv - constTrue // ignore `True`
+            val new_bv = bv.toSet - constTrue // ignore `True`
             val o = newLiteral() // auxiliary Tseitin variable
             new_bv.foreach(op => addClauseProcessed(clause(op, -o)))
             o
           }
         }
 
-        def or(bv: Set[Lit]): Lit = {
+        def or(bv: collection.Set[Lit]): Lit = {
           if (bv.isEmpty) {
             constFalse
           } else if (bv.size == 1) {
@@ -196,7 +195,7 @@ trait Solving extends Logic {
             // op1 \/ op2 \/ ... \/ opx <==>
             // (op1 -> o) /\ (op2 -> o) ... (opx -> o) /\ (op1 \/ op2 \/... \/ opx \/ !o)
             // (!op1 \/ o) /\ (!op2 \/ o) ... (!opx \/ o) /\ (op1 \/ op2 \/... \/ opx \/ !o)
-            val new_bv = bv - constFalse // ignore `False`
+            val new_bv = bv.toSet - constFalse // ignore `False`
             val o = newLiteral() // auxiliary Tseitin variable
             addClauseProcessed(new_bv + (-o))
             o
@@ -340,26 +339,23 @@ trait Solving extends Logic {
       val cnfExtractor = new AlreadyInCNF(symbolMapping)
       val cnfTransformer = new TransformToCnf(symbolMapping)
 
-      def cnfFor(prop: Prop): Solvable = {
+      def cnfFor(prop: Prop): Solvable =
         prop match {
-          case cnfExtractor.ToCnf(solvable) =>
-            // this is needed because t6942 would generate too many clauses with Tseitin
-            // already in CNF, just add clauses
-            solvable
-          case p                            =>
-            cnfTransformer.apply(p)
+          // this is needed because t6942 would generate too many clauses with Tseitin
+          // already in CNF, just add clauses
+          case cnfExtractor.ToCnf(solvable) => solvable
+          case prop                         => cnfTransformer.apply(prop)
         }
-      }
 
       simplified match {
         case And(props) =>
           // scala/bug#6942:
           // CNF(P1 /\ ... /\ PN) == CNF(P1) ++ CNF(...) ++ CNF(PN)
           val cnfs = new Array[Solvable](props.size)
-          props.iterator.map(x => cnfFor(x)).copyToArray(cnfs)
+          @unused val copied = props.iterator.map(x => cnfFor(x)).copyToArray(cnfs)
+          //assert(copied == cnfs.length, "")
           new Solvable(cnfs.flatten[Clause](_.cnf, reflect.classTag[Clause]), cnfs.head.symbolMapping)
-        case p          =>
-          cnfFor(p)
+        case simplified => cnfFor(simplified)
       }
     }
   }

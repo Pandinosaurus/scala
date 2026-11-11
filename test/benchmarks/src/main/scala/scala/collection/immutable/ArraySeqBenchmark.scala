@@ -15,7 +15,7 @@ import scala.reflect.ClassTag
 @State(Scope.Benchmark)
 class ArraySeqBenchmark {
 
-  @Param(Array("0", "1", "10", "1000", "10000"))
+  @Param(Array("0", "1", "10", "100", "1000", "10000"))
   var size: Int = _
   var integersS: ArraySeq[Int] = _
   var stringsS: ArraySeq[String] = _
@@ -89,4 +89,12 @@ class ArraySeqBenchmark {
   private def oldMap[A, B](seq: ArraySeq[A])(f: A => B): ArraySeq[B] =
     seq.iterableFactory.tabulate(seq.length)(i => f(seq.apply(i)))
 
+  @Benchmark def `min-max is reduction`(bh: Blackhole): Unit = bh.consume {
+    integersS.max
+  }
+
+  @Benchmark def sliding(bh: Blackhole): Any = {
+    var coll = stringsS
+    coll.sliding(2).foreach(bh.consume)
+  }
 }

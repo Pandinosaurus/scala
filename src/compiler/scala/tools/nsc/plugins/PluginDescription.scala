@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -12,8 +12,6 @@
 
 package scala.tools.nsc
 package plugins
-
-import scala.reflect.internal.util.StringContextStripMarginOps
 
 /** A description of a compiler plugin, suitable for serialization
  *  to XML for inclusion in the plugin's .jar file.

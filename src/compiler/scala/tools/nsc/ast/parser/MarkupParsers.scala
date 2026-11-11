@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -137,7 +137,7 @@ trait MarkupParsers {
 
             try handle.parseAttribute(r2p(start, mid, curOffset), tmp)
             catch {
-              case e: RuntimeException =>
+              case _: RuntimeException =>
                 errorAndResult("error parsing attribute value", parser.errorTermTree)
             }
 
@@ -171,8 +171,7 @@ trait MarkupParsers {
       xTakeUntil(handle.charData, () => r2p(start, mid, curOffset), "]]>")
     }
 
-    def xUnparsed: Tree = {
-      val start = curOffset
+    def xUnparsed(start: Int): Tree = {
       xTakeUntil(handle.unparsed, () => r2p(start, start, curOffset), "</xml:unparsed>")
     }
 
@@ -305,7 +304,7 @@ trait MarkupParsers {
      *                | xmlTag1 '/' '>'
      */
     def element: Tree = {
-      val start = curOffset
+      val start = curOffset - 1 // include <
       val (qname, attrMap) = xTag(())
       if (ch == '/') { // empty element
         xToken("/>")
@@ -314,7 +313,7 @@ trait MarkupParsers {
       else { // handle content
         xToken('>')
         if (qname == "xml:unparsed")
-          return xUnparsed
+          return xUnparsed(start)
 
         debugLastStartElement.push((start, qname))
         val ts = content
@@ -382,7 +381,7 @@ trait MarkupParsers {
         handle.isPattern = false
 
         val ts = new ArrayBuffer[Tree]
-        val start = curOffset
+        val start = curOffset - 1 // include <
         content_LT(ts)
 
         // parse more XML?
@@ -392,7 +391,7 @@ trait MarkupParsers {
             nextch()
             content_LT(ts)
           } while (charComingAfter(xSpaceOpt()) == '<')
-          handle.makeXMLseq(r2p(start, start, curOffset), ts)
+          handle.makeXMLseq(r2p(start, start, curOffset), ts, toVector = false)
         }
         else {
           assert(ts.length == 1, "Require one tree")
@@ -446,7 +445,7 @@ trait MarkupParsers {
      *                  | Name [S] '/' '>'
      */
     def xPattern: Tree = {
-      val start = curOffset
+      val start = curOffset - 1 // include <
       val qname = xName
       debugLastStartElement.push((start, qname))
       xSpaceOpt()

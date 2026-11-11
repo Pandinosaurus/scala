@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,7 +14,7 @@ package scala.tools.testkit
 
 import java.io.OutputStreamWriter
 import java.net.URI
-import java.nio.charset.StandardCharsets
+import java.nio.charset.StandardCharsets.UTF_8
 import java.util.Locale
 
 import javax.tools._
@@ -38,7 +38,7 @@ class VirtualCompiler {
 
   /** A javac file manager that places classfiles in `output`. */
   lazy val fileManager: JavaFileManager = {
-    val dflt = javac.getStandardFileManager(null, Locale.ENGLISH, StandardCharsets.UTF_8)
+    val dflt = javac.getStandardFileManager(null, Locale.ENGLISH, UTF_8)
     new VirtualFileManager(output, dflt)
   }
 

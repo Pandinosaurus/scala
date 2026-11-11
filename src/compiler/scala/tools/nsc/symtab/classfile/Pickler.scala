@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -89,7 +89,7 @@ abstract class Pickler extends SubComponent {
                 if (writeToSigFile)
                   writeSigFile(sym, pickle)
               }
-              if (sigWriter.isDefined && settings.YpickleWriteApiOnly) {
+              if (sigWriter.isDefined && settings.YpickleWriteApiOnly.value) {
                 pickle(noPrivates = false, writeToSymData = true, writeToSigFile = false)
                 pickle(noPrivates = true, writeToSymData = false, writeToSigFile = true)
               } else {
@@ -142,7 +142,7 @@ abstract class Pickler extends SubComponent {
     private def closeSigWriter(): Unit = {
       sigWriter.foreach { writer =>
         writer.close()
-        if (settings.verbose)
+        if (settings.verbose.value)
           reporter.echo(NoPosition, "[sig files written]")
       }
     }
@@ -150,7 +150,7 @@ abstract class Pickler extends SubComponent {
     override protected def shouldSkipThisPhaseForJava: Boolean = !settings.YpickleJava.value
   }
 
-  type Index   = mutable.AnyRefMap[AnyRef, Int] // a map from objects (symbols, types, names, ...) to indices into Entries
+  type Index   = mutable.HashMap[AnyRef, Int] // a map from objects (symbols, types, names, ...) to indices into Entries
   type Entries = Array[AnyRef]
 
   final val InitEntriesSize = 256
@@ -158,7 +158,7 @@ abstract class Pickler extends SubComponent {
   private[this] var _entries: Entries = _
 
   final def initPickle(root: Symbol, noPrivates: Boolean)(f: Pickle => Unit): Pickle = {
-    if (_index eq null)   { _index   = new Index(InitEntriesSize) }
+    if (_index eq null)   { _index   = new Index(InitEntriesSize, mutable.HashMap.defaultLoadFactor) }
     if (_entries eq null) { _entries = new Entries(InitEntriesSize) }
     val pickle = new Pickle(root, _index, _entries, noPrivates)
     try f(pickle) finally { pickle.close(); _index.clear(); fill(_entries, null) }
@@ -304,7 +304,7 @@ abstract class Pickler extends SubComponent {
 
             putChildren(sym, children.toList sortBy (_.sealedSortName))
           }
-          for (annot <- (sym.annotations filter (ann => ann.isStatic && !ann.isErroneous)).reverse)
+          for (annot <- sym.annotations.filter(ann => ann.isStatic && !ann.isErroneous))
             putAnnotation(sym, annot)
         }
         else if (sym != NoSymbol) {
@@ -369,7 +369,7 @@ abstract class Pickler extends SubComponent {
       // annotations in Modifiers are removed by the typechecker
       override def traverseModifiers(mods: Modifiers): Unit = if (putEntry(mods)) putEntry(mods.privateWithin)
       override def traverseName(name: Name): Unit           = putEntry(name)
-      override def traverseConstant(const: Constant): Unit  = putEntry(const)
+      override def traverseConstant(const: Constant): Unit  = putConstant(const)
       override def traverse(tree: Tree): Unit               = putTree(tree)
 
       def put(tree: Tree): Unit = {
@@ -418,7 +418,9 @@ abstract class Pickler extends SubComponent {
     private def putAnnotationBody(annot: AnnotationInfo): Unit = {
       def putAnnotArg(arg: Tree): Unit = {
         arg match {
-          case Literal(c) => putConstant(c)
+          // Keep Literal with an AnnotatedType. Used in AnnotationInfo.argIsDefault. Allow `null` to prevent NPEs:
+          // Literal(Constant(v)) is used eg in compiler plugins, it produces a tree with `tpe == null`.
+          case Literal(c) if arg.tpe == null || arg.tpe.isInstanceOf[ConstantType] => putConstant(c)
           case _ => putTree(arg)
         }
       }
@@ -475,7 +477,9 @@ abstract class Pickler extends SubComponent {
     private def writeAnnotation(annot: AnnotationInfo): Unit = {
       def writeAnnotArg(arg: Tree): Unit = {
         arg match {
-          case Literal(c) => writeRef(c)
+          // Keep Literal with an AnnotatedType. Used in AnnotationInfo.argIsDefault. Allow `null` to prevent NPEs:
+          // Literal(Constant(v)) is used eg in compiler plugins, it produces a tree with `tpe == null`.
+          case Literal(c) if arg.tpe == null || arg.tpe.isInstanceOf[ConstantType] => writeRef(c)
           case _ => writeRef(arg)
         }
       }
@@ -573,7 +577,7 @@ abstract class Pickler extends SubComponent {
       }
 
       def writeTreeBody(tree: Tree): Unit = {
-        writeNat(picklerSubTag(tree))
+        writeNat(translations.picklerSubTag(tree))
         if (!tree.isEmpty)
           writeTreeBodyTraverser traverse tree
       }
@@ -585,7 +589,7 @@ abstract class Pickler extends SubComponent {
         case StringTag  => writeRef(newTermName(c.stringValue))
         case ClazzTag   => writeRef(c.typeValue)
         case EnumTag    => writeRef(c.symbolValue)
-        case tag        => if (ByteTag <= tag && tag <= LongTag) writeLong(c.longValue)
+        case ctag       => if (ByteTag <= ctag && ctag <= LongTag) writeLong(c.longValue)
       }
 
       def writeModifiers(mods: Modifiers): Unit = {
@@ -621,7 +625,7 @@ abstract class Pickler extends SubComponent {
       // The picklerTag method can't determine if it's an external symbol reference
       val tag = entry match {
         case sym: Symbol if isExternalSymbol(sym) => if (sym.isModuleClass) EXTMODCLASSref else EXTref
-        case _                                    => picklerTag(entry)
+        case _                                    => translations.picklerTag(entry)
       }
       writeNat(tag)
       writeByte(0) // reserve a place to record the number of bytes written

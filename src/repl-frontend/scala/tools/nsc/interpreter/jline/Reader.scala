@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,14 +14,13 @@ package scala.tools.nsc.interpreter
 package jline
 
 import org.jline.builtins.InputRC
-import org.jline.keymap.KeyMap
 import org.jline.reader.Parser.ParseContext
 import org.jline.reader._
 import org.jline.reader.impl.{CompletionMatcherImpl, DefaultParser, LineReaderImpl}
 import org.jline.terminal.Terminal
 
 import java.io.{ByteArrayInputStream, File}
-import java.net.{MalformedURLException, URL}
+import java.net.{MalformedURLException, URI, URL}
 import java.util.{List => JList}
 import scala.io.Source
 import scala.reflect.internal.Chars
@@ -80,7 +79,7 @@ object Reader {
       sys.props
          .get("jline.inputrc")
          .flatMap { path =>
-           try Some(new URL(path))
+           try Some(new URI(path).toURL)
            catch {
              case _: MalformedURLException =>
                Some(new File(path).toURI.toURL)
@@ -101,7 +100,7 @@ object Reader {
     }
 
     lazy val inputrcFileContents: Option[Array[Byte]] = inputrcFileUrl().map(in => urlByteArray(in))
-    val jlineTerminal = TerminalBuilder.builder().jna(true).build()
+    val jlineTerminal = TerminalBuilder.builder().build()
     val completer = new Completion(completion)
     val parser    = new ReplParser(repl)
     val history   = new DefaultHistory
@@ -150,8 +149,6 @@ object Reader {
       case NonFatal(_) =>
     } //ignore
 
-    val keyMap = reader.getKeyMaps.get("main")
-
     object ScalaShowType {
       val Name = "scala-show-type"
       private var lastInvokeLocation: Option[(String, Int)] = None
@@ -180,13 +177,6 @@ object Reader {
     }
     reader.getWidgets().put(ScalaShowType.Name, () => ScalaShowType())
 
-    locally {
-      import LineReader._
-      // VIINS, VICMD, EMACS
-      val keymap = if (config.viMode) VIINS else EMACS
-      reader.getKeyMaps.put(MAIN, reader.getKeyMaps.get(keymap));
-      keyMap.bind(new Reference(ScalaShowType.Name), KeyMap.alt(KeyMap.ctrl('t')))
-    }
     def secure(p: java.nio.file.Path): Unit = {
       try scala.reflect.internal.util.OwnerOnlyChmod.chmodFileOrCreateEmpty(p)
       catch { case scala.util.control.NonFatal(e) =>

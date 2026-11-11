@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -60,7 +60,7 @@ import scala.runtime.AbstractFunction2
   *  @tparam V         the type of the values associated with the keys.
   *  @param ordering   the implicit ordering used to compare objects of type `A`.
   *
-  *  @see [[https://docs.scala-lang.org/overviews/collections/concrete-immutable-collection-classes.html#red-black-trees "Scala's Collection Library overview"]]
+  *  @see [[https://docs.scala-lang.org/overviews/collections-2.13/concrete-immutable-collection-classes.html#red-black-trees "Scala's Collection Library overview"]]
   *  section on `Red-Black Trees` for more information.
   *
   *  @define Coll immutable.TreeMap
@@ -131,6 +131,16 @@ final class TreeMap[K, +V] private (private val tree: RB.Tree[K, V])(implicit va
     if (resultOrNull eq null) default
     else resultOrNull.value
   }
+
+  // override for performance -- no Some allocation
+  override def apply(key: K): V = {
+    val resultOrNull = RB.lookup(tree, key)
+    if (resultOrNull eq null) default(key)
+    else resultOrNull.value
+  }
+
+  // override for performance -- no Some allocation
+  override def contains(key: K): Boolean = RB.contains(tree, key)
 
   def removed(key: K): TreeMap[K,V] =
     newMapOrSelf(RB.delete(tree, key))
@@ -304,14 +314,10 @@ object TreeMap extends SortedMapFactory[TreeMap] {
       case tm: TreeMap[K, V] if ordering == tm.ordering => tm
       case sm: scala.collection.SortedMap[K, V] if ordering == sm.ordering =>
         new TreeMap[K, V](RB.fromOrderedEntries(sm.iterator, sm.size))
+      case _ if it.knownSize == 0 =>
+        new TreeMap[K, V]
       case _ =>
-        var t: RB.Tree[K, V] = null
-        val i = it.iterator
-        while (i.hasNext) {
-          val (k, v) = i.next()
-          t = RB.update(t, k, v, overwrite = true)
-        }
-        new TreeMap[K, V](t)
+        (newBuilder[K, V] ++= it).result()
     }
 
   def newBuilder[K, V](implicit ordering: Ordering[K]): ReusableBuilder[(K, V), TreeMap[K, V]] = new TreeMapBuilder[K, V]

@@ -1,5 +1,5 @@
-// scalac: -Xsource:3.0 -Xlint -Werror
-//
+//> using options -Werror -Xlint -Xsource:3
+
 object Foo {
   List(1,2,3).toSet()
 

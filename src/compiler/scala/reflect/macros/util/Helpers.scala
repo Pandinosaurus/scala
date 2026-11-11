@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,10 +13,10 @@
 package scala.reflect.macros
 package util
 
-import scala.tools.nsc.typechecker.Analyzer
+import scala.tools.nsc.typechecker.AbstractAnalyzer
 
 trait Helpers {
-  self: Analyzer =>
+  self: AbstractAnalyzer =>
 
   import global._
   import definitions._

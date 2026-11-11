@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -24,6 +24,8 @@ import scala.tools.nsc.backend.jvm.opt.BytecodeUtils._
  */
 abstract class AsmAnalyzer[V <: Value](methodNode: MethodNode, classInternalName: InternalName, val analyzer: Analyzer[V]) {
   computeMaxLocalsMaxStack(methodNode)
+  // ASM's default limits guard against untrusted class files; we only analyze our own bytecode
+  analyzer.setComputeLimits(Int.MaxValue, Long.MaxValue)
   try {
     analyzer.analyze(classInternalName, methodNode)
   } catch {

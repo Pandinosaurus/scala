@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,6 +13,7 @@
 package scala.tools.nsc
 package fsc
 
+import scala.annotation.unused
 import scala.reflect.io.Path
 import scala.util.control.NonFatal
 
@@ -38,7 +39,7 @@ class ResidentScriptRunner(settings: GenericRunnerSettings) extends AbstractScri
   }
 }
 
-final class DaemonKiller(settings: GenericRunnerSettings) extends ScriptRunner {
+final class DaemonKiller(@unused settings: GenericRunnerSettings) extends ScriptRunner {
   def runScript(script: String, scriptArgs: List[String]) = shutdownDaemon()
 
   def runScriptText(script: String, scriptArgs: List[String]) = shutdownDaemon()

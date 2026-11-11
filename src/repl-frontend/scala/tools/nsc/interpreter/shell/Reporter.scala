@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,15 +13,14 @@
 package scala.tools.nsc.interpreter.shell
 
 import java.io.PrintWriter
-
 import scala.reflect.internal
-import scala.reflect.internal.util.{NoSourceFile, Position, StringOps}
+import scala.reflect.internal.util.{CodeAction, NoSourceFile, Position, StringOps}
 import scala.tools.nsc.interpreter.{Naming, ReplReporter, ReplRequest}
-import scala.tools.nsc.reporters.{FilteringReporter, Reporter}
+import scala.tools.nsc.reporters.FilteringReporter
 import scala.tools.nsc.{ConsoleWriter, NewLinePrintWriter, Settings}
 
 object ReplReporterImpl {
-  val defaultOut = new NewLinePrintWriter(new ConsoleWriter, true)
+  val defaultOut = new NewLinePrintWriter(new ConsoleWriter, autoFlush = true)
 }
 
 // settings are for AbstractReporter (noWarnings, isVerbose, isDebug)
@@ -98,7 +97,7 @@ class ReplReporterImpl(val config: ShellConfig, val settings: Settings = new Set
     *  debugging information (like printing the classpath) is not rendered
     *  invisible due to the max message length.
     */
-  var truncationOK: Boolean = !settings.verbose
+  var truncationOK: Boolean = !settings.verbose.value
 
   def truncate(str: String): String =
     if (truncationOK && (maxPrintString != 0 && str.length > maxPrintString)) (str take maxPrintString - 3) + "..."
@@ -150,35 +149,20 @@ class ReplReporterImpl(val config: ShellConfig, val settings: Settings = new Set
     case internal.Reporter.INFO    => RESET
   }
 
-  def doReport(pos: Position, msg: String, severity: Severity): Unit = withoutTruncating {
+  override def doReport(pos: Position, msg: String, severity: Severity, actions: List[CodeAction]): Unit = withoutTruncating {
     val prefix =
       if (colorOk) severityColor(severity) + clabel(severity) + RESET
       else clabel(severity)
 
-    printMessage(pos, prefix + msg)
+    printMessageAt(pos, prefix + msg)
   }
-
-  private var boringExplanations = Set.empty[String]
 
   // indent errors, error message uses the caret to point at the line already on the screen instead of repeating it
   // TODO: can we splice the error into the code the user typed when multiple lines were entered?
   // (should also comment out the error to keep multi-line copy/pastable)
   // TODO: multiple errors are not very intuitive (should the second error for same line repeat the line?)
   // TODO: the console could be empty due to external changes (also, :reset? -- see unfortunate example in jvm/interpreter (plusOne))
-  def printMessage(posIn: Position, msg0: String): Unit = {
-    val msg = {
-      val main = Reporter.stripExplanation(msg0)
-      if (main eq msg0) main
-      else {
-        val (_, explanation) = Reporter.splitExplanation(msg0)
-        val suffix = explanation.mkString("\n")
-        if (boringExplanations(suffix)) main
-        else {
-          boringExplanations += suffix
-          s"$main\n$suffix"
-        }
-      }
-    }
+  def printMessageAt(posIn: Position, msg: String): Unit = {
     if ((posIn eq null) || (posIn.source eq NoSourceFile)) printMessage(msg)
     else if (posIn.source.file.name == "<console>" && posIn.line == 1) {
       // If there's only one line of input, and it's already printed on the console (as indicated by the position's source file name),
@@ -216,7 +200,7 @@ class ReplReporterImpl(val config: ShellConfig, val settings: Settings = new Set
 
       if (isSynthetic) printMessage("\n(To diagnose errors in synthetic code, try adding `// show` to the end of your input.)")
     }
-    if (settings.prompt) displayPrompt()
+    if (settings.prompt.value) displayPrompt()
   }
 
   def printMessage(msg: String): Unit =

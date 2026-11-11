@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -40,7 +40,6 @@ trait TypeAdaptingTransformer { self: TreeDSL =>
       }
     }
 
-    private def isPrimitiveValueType(tpe: Type)      = isPrimitiveValueClass(tpe.typeSymbol)
     final def isPrimitiveValueMember(sym: Symbol)    = isPrimitiveValueClass(sym.owner)
     final def isMethodTypeWithEmptyParams(tpe: Type) = tpe.isInstanceOf[MethodType] && tpe.params.isEmpty
     final def applyMethodWithEmptyParams(qual: Tree) = Apply(qual, List()) setPos qual.pos setType qual.tpe.resultType
@@ -52,6 +51,13 @@ trait TypeAdaptingTransformer { self: TreeDSL =>
       case LabelDef(_, _, _) =>
         val ldef = deriveLabelDef(tree)(box)
         ldef setType ldef.rhs.tpe
+      case Apply(fun @ Ident(_), _) if fun.symbol.isLabel =>
+        // don't box around label jumps, scala/bug#13043
+        // need to set the tree type to avoid looping in `adaptToType`
+        tree.setType(tree.tpe match {
+          case ErasedValueType(clazz, _) => clazz.tpe
+          case _ => ObjectTpe
+        })
       case _ =>
         val tree1 = tree.tpe match {
           case ErasedValueType(clazz, _) => New(clazz, cast(tree, underlyingOfValueClass(clazz)))
@@ -59,11 +65,10 @@ trait TypeAdaptingTransformer { self: TreeDSL =>
             case UnitClass =>
               if (treeInfo isExprSafeToInline tree) REF(BoxedUnit_UNIT)
               else BLOCK(tree, REF(BoxedUnit_UNIT))
-            case NothingClass => tree // a non-terminating expression doesn't need boxing
             case x =>
               assert(x != ArrayClass, "array")
               tree match {
-                case Apply(boxFun, List(arg)) if isSafelyRemovableUnbox(tree, arg) =>
+                case Apply(_, List(arg)) if isSafelyRemovableUnbox(tree, arg) =>
                   arg
                 case _ =>
                   (REF(currentRun.runDefinitions.boxMethod(x)) APPLY tree) setPos (tree.pos) setType ObjectTpe
@@ -88,8 +93,8 @@ trait TypeAdaptingTransformer { self: TreeDSL =>
           if (treeInfo isExprSafeToInline side) value
           else BLOCK(side, value)
         val tree1 = pt match {
-          case ErasedValueType(clazz, BoxedUnitTpe) => cast(preservingSideEffects(tree, REF(BoxedUnit_UNIT)), pt)
-          case ErasedValueType(clazz, underlying)   => cast(unboxValueClass(tree, clazz, underlying), pt)
+          case ErasedValueType(_, BoxedUnitTpe) => cast(preservingSideEffects(tree, REF(BoxedUnit_UNIT)), pt)
+          case ErasedValueType(clazz, underlying) => cast(unboxValueClass(tree, clazz, underlying), pt)
           case _ =>
             pt.typeSymbol match {
               case UnitClass  =>

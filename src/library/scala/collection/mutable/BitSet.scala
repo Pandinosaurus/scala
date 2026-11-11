@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -23,7 +23,7 @@ import scala.annotation.implicitNotFound
   *
   * $bitsetinfo
   *
-  * @see [[https://docs.scala-lang.org/overviews/collections/concrete-mutable-collection-classes.html#mutable-bitsets "Scala's Collection Library overview"]]
+  * @see [[https://docs.scala-lang.org/overviews/collections-2.13/concrete-mutable-collection-classes.html#mutable-bitsets "Scala's Collection Library overview"]]
   * section on `Mutable Bitsets` for more information.
   *
   * @define Coll `BitSet`
@@ -51,7 +51,7 @@ class BitSet(protected[collection] final var elems: Array[Long])
   override protected def newSpecificBuilder: Builder[Int, BitSet] = bitSetFactory.newBuilder
   override def empty: BitSet = bitSetFactory.empty
 
-  def bitSetFactory = BitSet
+  def bitSetFactory: BitSet.type = BitSet
 
   override def unsorted: Set[Int] = this
 
@@ -278,7 +278,7 @@ class BitSet(protected[collection] final var elems: Array[Long])
         * Array Shrinking:
         * If `this` is not longer than `bs`, then since we must iterate through the full array of words,
         * we can track the new highest index word which is non-zero, at little additional cost. At the end, the new
-        * Array[Long] allocated for the returned BitSet will only be of size `maxNonZeroIndex + 1`
+        * `Array[Long]` allocated for the returned `BitSet` will only be of size `maxNonZeroIndex + 1`
         */
 
       val bsnwords = bs.nwords

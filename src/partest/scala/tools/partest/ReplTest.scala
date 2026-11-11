@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -12,10 +12,11 @@
 
 package scala.tools.partest
 
+import java.io.File.pathSeparator
+
 import scala.tools.nsc.Settings
 import scala.tools.nsc.interpreter.shell.{ILoop, ShellConfig}
-import scala.util.matching.Regex
-import scala.util.matching.Regex.Match
+import scala.util.matching.Regex.{quoteReplacement, Match}
 
 /** Test code or commands in a REPL.
  *
@@ -31,11 +32,11 @@ abstract class ReplTest extends DirectTest {
   // final because we need to enforce the existence of a couple settings.
   final override def settings: Settings = {
     val s = super.settings
-    s.Xjline.value = "off"
+    s.Xnojline.value = true
     if (getClass.getClassLoader.getParent != null) {
       s.classpath.value = s.classpath.value match {
         case "" => testOutput.toString
-        case s => s + java.io.File.pathSeparator + testOutput.toString
+        case cp => s"$cp$pathSeparator$testOutput"
       }
       s.usejavacp.value = true
     }
@@ -75,8 +76,8 @@ trait Lambdaless extends ReplTest {
   override def normalize(s: String) = stripLambdaClassName(super.normalize(s))
 }
 object Lambdaless {
-  private val lambdaless = """\$Lambda\$\d+/(?:0x[a-f0-9]{16}|\d+)(@[a-fA-F0-9]+)?""".r
-  private def stripLambdaClassName(s: String): String = lambdaless.replaceAllIn(s, Regex.quoteReplacement("<function>"))
+  private val lambdaless = """\$Lambda(?:\$\d+)?/(?:0x[a-f0-9]{16}|\d+)(?:@[a-fA-F0-9]+)?""".r
+  private def stripLambdaClassName(s: String): String = lambdaless.replaceAllIn(s, quoteReplacement("<function>"))
 }
 
 /** Normalize a REPL stack trace by stripping line numbers and count of elided frames. */
@@ -132,7 +133,7 @@ abstract class SessionTest extends ReplTest  {
   override final def code = pasted.findAllMatchIn(expected.mkString("", "\n", "\n")).map {
     case pasted(null, null, prompted) =>
       def continued(m: Match): Option[String] = m match {
-        case margin(text) => Some(Regex.quoteReplacement(text))
+        case margin(text) => Some(quoteReplacement(text))
         case _            => None
       }
       margin.replaceSomeIn(prompted, continued)
@@ -154,7 +155,7 @@ abstract class SessionTest extends ReplTest  {
 }
 object SessionTest {
   // \R for line break since Java 8
-  private def input(prompt: String) = raw"""(?m)^$prompt(:pa.*\R)// Entering paste mode.*\R\R((?:.*\R)*)\R// Exiting paste mode.*\R|^scala> (.*\R(?:\s*\| .*\R)*)""".r
+  private def input(prompt: String) = raw"""(?m)^$prompt(:pa.*\R)// Entering paste mode.*\R\R((?:.*\R)*)// Exiting paste mode.*\R|^scala> (.*\R(?:\s*\| .*\R)*)""".r
 
   private val margin = """(?m)^\s*\| (.*)$""".r
 }

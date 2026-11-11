@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -50,7 +50,7 @@ package object reflect {
 
   def classTag[T](implicit ctag: ClassTag[T]) = ctag
 
-  /** Make a java reflection object accessible, if it is not already
+  /** Makes a java reflection object accessible, if it is not already
    *  and it is possible to do so. If a SecurityException is thrown in the
    *  attempt, it is caught and discarded.
    */

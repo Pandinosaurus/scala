@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -15,11 +15,12 @@ package reflect
 package internal
 package tpe
 
-import scala.collection.{immutable, mutable}
-import Flags._
 import scala.annotation.{nowarn, tailrec}
-import Variance._
+import scala.collection.{immutable, mutable}
 import scala.collection.mutable.ListBuffer
+import Flags._
+import Variance._
+import util.{ReusableInstance, StringContextStripMarginOps}
 
 private[internal] trait TypeMaps {
   self: SymbolTable =>
@@ -243,7 +244,7 @@ private[internal] trait TypeMaps {
       annots foreach foldOver
 
     def foldOver(annot: AnnotationInfo): Unit = {
-      val AnnotationInfo(atp, args, assocs) = annot
+      val AnnotationInfo(atp, args, _) = annot
       atp.foldOver(this)
       foldOverAnnotArgs(args)
     }
@@ -610,7 +611,7 @@ private[internal] trait TypeMaps {
       /** Rewrite `This` trees in annotation argument trees */
       override def transform(tree: Tree): Tree = super.transform(tree) match {
         case This(_) if matchesThis(tree.symbol) => newThis()
-        case tree                                => tree
+        case transformed                         => transformed
       }
     }
 
@@ -816,6 +817,10 @@ private[internal] trait TypeMaps {
         case SingleType(pre, sym) if pre ne NoPrefix =>
           val newSym = substFor(sym)
           (if (sym eq newSym) tpe else singleType(pre, newSym)).mapOver(this)
+        case tp: RefinedType =>
+          val owner = tpe.typeSymbol.owner
+          val newOwner = substFor(owner)
+          (if (newOwner eq owner) tpe else copyRefinedType(tp, tp.parents, tp.decls, newOwner)).mapOver(this)
         case _ =>
           super.apply(tpe)
       }
@@ -841,7 +846,7 @@ private[internal] trait TypeMaps {
             transformIfMapped(id)(toSym => strictCopy.Ident(id, toSym.name))
           case sel @ Select(qual, _) =>
             transformIfMapped(sel)(toSym => strictCopy.Select(sel, qual, toSym.name))
-          case tree => tree
+          case transformed => transformed
         }
     }
 
@@ -904,7 +909,7 @@ private[internal] trait TypeMaps {
   }
 
   // dependent method types
-  object IsDependentCollector extends TypeCollector(false) {
+  class IsDependentCollector extends TypeCollector(initial = false) {
     def apply(tp: Type): Unit =
       if (tp.isImmediatelyDependent) result = true
       else if (!result) tp.dealias.foldOver(this)
@@ -1049,7 +1054,7 @@ private[internal] trait TypeMaps {
     }
   }
 
-  abstract class ExistsTypeRefCollector extends TypeCollector[Boolean](false) {
+  abstract class ExistsTypeRefCollector extends TypeCollector[Boolean](initial = false) {
 
     protected def pred(sym: Symbol): Boolean
 
@@ -1104,9 +1109,6 @@ private[internal] trait TypeMaps {
     }
     override protected def pred(sym1: Symbol): Boolean = sym1 == sym
   }
-  class ContainsAnyCollector(syms: List[Symbol]) extends ExistsTypeRefCollector {
-    override protected def pred(sym1: Symbol): Boolean = syms.contains(sym1)
-  }
   class ContainsAnyKeyCollector(symMap: mutable.HashMap[Symbol, _]) extends ExistsTypeRefCollector {
     override protected def pred(sym1: Symbol): Boolean = symMap.contains(sym1)
   }
@@ -1145,6 +1147,14 @@ private[internal] trait TypeMaps {
     }
   }
 
+  /** Applies `f` to the types satisfying `p`, in the order `FilterTypeCollector` collects them. */
+  class FilterForEachTypeFolder[U](p: Type => Boolean, f: Type => U) extends TypeFolder {
+    def apply(tp: Type): Unit = {
+      if (p(tp)) f(tp)
+      tp.foldOver(this)
+    }
+  }
+
   /** A map to implement the `filter` method. */
   class FindTypeCollector(p: Type => Boolean) extends TypeCollector[Option[Type]](None) {
     def apply(tp: Type): Unit =
@@ -1152,7 +1162,7 @@ private[internal] trait TypeMaps {
         if (p(tp)) result = Some(tp) else tp.foldOver(this)
   }
 
-  object ErroneousCollector extends TypeCollector(false) {
+  class ErroneousCollector extends TypeCollector(initial = false) {
     def apply(tp: Type): Unit =
       if (!result) {
         result = tp.isError
@@ -1289,7 +1299,7 @@ private[internal] trait TypeMaps {
     }
   }
 
-  object UnrelatableCollector extends CollectTypeCollector[TypeSkolem](PartialFunction.empty) {
+  class UnrelatableCollector extends CollectTypeCollector[TypeSkolem](PartialFunction.empty) {
     var barLevel: Int = 0
 
     override def apply(tp: Type): Unit = tp match {
@@ -1298,7 +1308,7 @@ private[internal] trait TypeMaps {
     }
   }
 
-  object IsRelatableCollector extends TypeCollector[Boolean](true) {
+  class IsRelatableCollector extends TypeCollector[Boolean](initial = true) {
     var barLevel: Int = 0
 
     def apply(tp: Type): Unit = if (result) tp match {
@@ -1306,4 +1316,14 @@ private[internal] trait TypeMaps {
       case _ => tp.foldOver(this)
     }
   }
+
+  // These collectors carry mutable state, so runtime reflection must not share an instance between threads.
+  private[internal] val isDependentCollectorInstance: ReusableInstance[IsDependentCollector] =
+    ReusableInstance(new IsDependentCollector, enabled = isCompilerUniverse)
+  private[internal] val erroneousCollectorInstance: ReusableInstance[ErroneousCollector] =
+    ReusableInstance(new ErroneousCollector, enabled = isCompilerUniverse)
+  private[internal] val unrelatableCollectorInstance: ReusableInstance[UnrelatableCollector] =
+    ReusableInstance(new UnrelatableCollector, enabled = isCompilerUniverse)
+  private[internal] val isRelatableCollectorInstance: ReusableInstance[IsRelatableCollector] =
+    ReusableInstance(new IsRelatableCollector, enabled = isCompilerUniverse)
 }

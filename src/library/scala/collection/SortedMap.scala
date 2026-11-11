@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -105,13 +105,13 @@ trait SortedMapOps[K, +V, +CC[X, Y] <: Map[X, Y] with SortedMapOps[X, Y, CC, _],
   def firstKey: K = head._1
   def lastKey: K = last._1
 
-  /** Find the element with smallest key larger than or equal to a given key.
+  /** Finds the element with smallest key larger than or equal to a given key.
     * @param key The given key.
     * @return `None` if there is no such node.
     */
   def minAfter(key: K): Option[(K, V)] = rangeFrom(key).headOption
 
-  /** Find the element with largest key less than a given key.
+  /** Finds the element with largest key less than a given key.
     * @param key The given key.
     * @return `None` if there is no such node.
     */
@@ -179,16 +179,16 @@ trait SortedMapOps[K, +V, +CC[X, Y] <: Map[X, Y] with SortedMapOps[X, Y, CC, _],
   override def concat[V2 >: V](suffix: IterableOnce[(K, V2)]): CC[K, V2] = sortedMapFactory.from(suffix match {
     case it: Iterable[(K, V2)] => new View.Concat(this, it)
     case _ => iterator.concat(suffix.iterator)
-  })(ordering)
+  })(using ordering)
 
   /** Alias for `concat` */
   @`inline` override final def ++ [V2 >: V](xs: IterableOnce[(K, V2)]): CC[K, V2] = concat(xs)
 
   @deprecated("Consider requiring an immutable Map or fall back to Map.concat", "2.13.0")
-  override def + [V1 >: V](kv: (K, V1)): CC[K, V1] = sortedMapFactory.from(new View.Appended(this, kv))(ordering)
+  override def + [V1 >: V](kv: (K, V1)): CC[K, V1] = sortedMapFactory.from(new View.Appended(this, kv))(using ordering)
 
   @deprecated("Use ++ with an explicit collection argument instead of + with varargs", "2.13.0")
-  override def + [V1 >: V](elem1: (K, V1), elem2: (K, V1), elems: (K, V1)*): CC[K, V1] = sortedMapFactory.from(new View.Concat(new View.Appended(new View.Appended(this, elem1), elem2), elems))(ordering)
+  override def + [V1 >: V](elem1: (K, V1), elem2: (K, V1), elems: (K, V1)*): CC[K, V1] = sortedMapFactory.from(new View.Concat(new View.Appended(new View.Appended(this, elem1), elem2), elems))(using ordering)
 }
 
 object SortedMapOps {

@@ -46,7 +46,7 @@ class DeterminismTester {
       g.settings.classpath.value = output.toAbsolutePath.toString
       g.settings.outputDirs.setSingleOutput(output.toString)
       g.settings.async.value = true
-      g.settings.processArguments(scalacOptions, true)
+      g.settings.processArguments(scalacOptions, processAll = true)
       val storeReporter = new StoreReporter(g.settings)
       g.reporter = storeReporter
       import g._
@@ -61,7 +61,8 @@ class DeterminismTester {
             val f = output.resolve(s.file.name)
             Files.write(f, new String(s.content).getBytes(Charset.defaultCharset()))
           }
-          val options = List("-d", output.toString)
+          // `-parameters` so that parameter names of Java methods loaded from classfiles are those in the source
+          val options = List("-parameters", "-d", output.toString)
           val javac = ToolProvider.getSystemJavaCompiler
           assert(javac != null, "No javac from getSystemJavaCompiler. If the java on your path isn't a JDK version, but $JAVA_HOME is, launch sbt with --java-home \"$JAVA_HOME\"")
           val fileMan = javac.getStandardFileManager(null, null, null)

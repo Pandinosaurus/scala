@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -217,7 +217,7 @@ abstract class Inliner {
         }
         val indentString = " " * indent
         this match {
-          case s @ InlineLogSuccess(r, sizeBefore, sizeAfter) =>
+          case InlineLogSuccess(r, sizeBefore, sizeAfter) =>
             s"${indentString}inlined ${calleeString(r)} (${r.logText}). Before: $sizeBefore ins, after: $sizeAfter ins."
 
           case InlineLogRewrite(closureInit, invocations) =>
@@ -359,7 +359,7 @@ abstract class Inliner {
             state.illegalAccessInstructions += instructionMap(ins)
           }
           val callInsn = r.callsite.callsiteInstruction
-          state.illegalAccessInstructions.remove(callInsn)
+          state.illegalAccessInstructions.subtractOne(callInsn)
           if (state.illegalAccessInstructions.isEmpty)
             state.undoLog = NoUndoLogging
           state.inlineLog.logSuccess(r, sizeBefore, method.instructions.size, state.outerCallsite(r.callsite.callsiteInstruction))
@@ -532,7 +532,7 @@ abstract class Inliner {
      * Break cycles in the inline request graph by removing callsites.
      *
      * The list `requests` is traversed left-to-right, removing those callsites that are part of a
-     * cycle. Elided callsites are also removed from the `inlineRequestsForMethod` map.
+     * cycle. Elided callsites are added to the `elided` set.
      */
     def breakInlineCycles: List[(MethodNode, List[InlineRequest])] = {
       // is there a path of inline requests from start to goal?
@@ -664,7 +664,7 @@ abstract class Inliner {
         BackendUtils.clearDceDone(methodNode)
         callGraph.refresh(methodNode, ownerClass)
 
-        onIndyLambdaImplMethodIfPresent(ownerClass.internalName)(_.remove(methodNode))
+        onIndyLambdaImplMethodIfPresent(ownerClass.internalName)(_.subtractOne(methodNode))
         if (currentIndyLambdaBodyMethods.nonEmpty)
           onIndyLambdaImplMethod(ownerClass.internalName)(ms => ms(methodNode) = mutable.Map.empty ++= currentIndyLambdaBodyMethods)
       }
@@ -771,7 +771,10 @@ abstract class Inliner {
           if (varInstruction.getOpcode == ASTORE) refLocals += varInstruction.`var`
         }
       case iinc: IincInsnNode =>
-        iinc.`var` += localVarShift
+        if (iinc.`var` < calleeParamLocals.length)
+          iinc.`var` = calleeParamLocals(iinc.`var`)
+        else
+          iinc.`var` += localVarShift
       case _ =>
     }
 
@@ -854,6 +857,7 @@ abstract class Inliner {
     // Use a fresh slot for the return value. We could re-use local variable slot of the inlined
     // code, but this makes some cleanups (in LocalOpt) fail / generate less clean code.
     val returnValueIndex = BackendUtils.maxLocals(callsiteMethod) + BackendUtils.maxLocals(callee) - numSavedParamSlots
+    var needNullOutReturnValue: Boolean = false
 
     def returnValueStore(returnInstruction: AbstractInsnNode) = {
       val opc = returnInstruction.getOpcode match {
@@ -881,31 +885,40 @@ abstract class Inliner {
 
       def drop(slot: Int) = returnReplacement add getPop(frame.peekStack(slot).getSize)
 
-      // for non-void methods, store the stack top into the return local variable
-      if (hasReturnValue) {
-        returnReplacement add returnValueStore(originalReturn)
-        stackHeight -= 1
-      }
+      if (stackHeight == (if (hasReturnValue) 1 else 0)) {
+        // In most cases, the xRETURN we found should be at an empty stack height,
+        // either because it comes from Java in statement position, or because
+        // it comes from Scala in a tail expression position. For this common
+        // case, we don't have to manipulate the stack at all; we only leave
+        // the optional return value on the stack before jumping
+      } else {
+        // Otherwise, we have to empty the stack and only leave the optional
+        // return value on the stack.
 
-      // drop the rest of the stack
-      for (i <- 0 until stackHeight) drop(i)
+        // for non-void methods, store the stack top into the return local variable
+        if (hasReturnValue) {
+          returnReplacement add returnValueStore(originalReturn)
+          stackHeight -= 1
+          if (originalReturn.getOpcode() == ARETURN)
+            needNullOutReturnValue = true
+        }
+
+        // drop the rest of the stack
+        for (i <- 0 until stackHeight) drop(i)
+
+        // load the return value back on the stack
+        if (hasReturnValue)
+          returnReplacement add new VarInsnNode(returnType.getOpcode(ILOAD), returnValueIndex)
+      }
 
       returnReplacement add new JumpInsnNode(GOTO, postCallLabel)
       clonedInstructions.insert(inlinedReturn, returnReplacement)
       clonedInstructions.remove(inlinedReturn)
     }
 
-    // Load instruction for the return value
-    if (hasReturnValue) {
-      val retVarLoad = {
-        val opc = returnType.getOpcode(ILOAD)
-        new VarInsnNode(opc, returnValueIndex)
-      }
-      clonedInstructions.insert(postCallLabel, retVarLoad)
-      if (retVarLoad.getOpcode == ALOAD) {
-        nullOutLocals.add(new InsnNode(ACONST_NULL))
-        nullOutLocals.add(new VarInsnNode(ASTORE, returnValueIndex))
-      }
+    if (needNullOutReturnValue) {
+      nullOutLocals.add(new InsnNode(ACONST_NULL))
+      nullOutLocals.add(new VarInsnNode(ASTORE, returnValueIndex))
     }
 
     val hasNullOutInsn = nullOutLocals.size > 0 // save here, the next line sets the size to 0
@@ -982,7 +995,7 @@ abstract class Inliner {
    * if the body of the callee is changed by the inliner / optimizer, so it can be used early
    * (when looking at the call graph and collecting inline requests for the program).
    *
-   * The tests that inspect the callee's instructions are implemented in method `canInlineBody`,
+   * The tests that inspect the callee's instructions are implemented in method `canInlineCallsite`,
    * which is queried when performing an inline.
    *
    * @return `Some(message)` if inlining cannot be performed, `None` otherwise
@@ -1000,6 +1013,8 @@ abstract class Inliner {
       Some(StrictfpMismatch(
         calleeDeclarationClass.internalName, callee.name, callee.desc, callsite.isInlineAnnotated,
         callsiteClass.internalName, callsiteMethod.name, callsiteMethod.desc))
+    } else if (callee.instructions.size == 0) {
+      Some(NoBytecode(calleeDeclarationClass.internalName, callee.name, callee.desc, callsite.isInlineAnnotated))
     } else
       None
   }
@@ -1173,6 +1188,41 @@ abstract class Inliner {
    *     error occurred
    */
   def findIllegalAccess(instructions: InsnList, calleeDeclarationClass: ClassBType, destinationClass: ClassBType): Either[(AbstractInsnNode, OptimizerWarning), List[AbstractInsnNode]] = {
+    def isAccessibleField(owner: String, name: String, desc: String): Either[OptimizerWarning, Boolean] = {
+      val fieldRefClass = classBTypeFromParsedClassfile(owner)
+      for {
+        (fieldNode, fieldDeclClassNode) <- byteCodeRepository.fieldNode(fieldRefClass.internalName, name, desc): Either[OptimizerWarning, (FieldNode, InternalName)]
+        fieldDeclClass                  =  classBTypeFromParsedClassfile(fieldDeclClassNode)
+        res                             <- memberIsAccessible(fieldNode.access, fieldDeclClass, fieldRefClass, destinationClass)
+      } yield {
+        // ensure the result ClassBType is cached (for stack map frame calculation)
+        if (res) bTypeForDescriptorFromClassfile(desc)
+        res
+      }
+    }
+
+    def isAccessibleMethod(owner: String, name: String, desc: String, descToLoad: => String = null, isInvokeSpecial: Boolean = false): Either[OptimizerWarning, Boolean] = {
+      val methodRefClass = classBTypeFromParsedClassfile(owner)
+      for {
+        (methodNode, methodDeclClassNode) <- byteCodeRepository.methodNode(methodRefClass.internalName, name, desc): Either[OptimizerWarning, (MethodNode, InternalName)]
+        methodDeclClass                   =  classBTypeFromParsedClassfile(methodDeclClassNode)
+        res                               <-
+          if (isInvokeSpecial && name != GenBCode.INSTANCE_CONSTRUCTOR_NAME)
+            // invokespecial is used for private method calls, super calls and instance constructor calls.
+            // private method and super calls can only be inlined into the same class.
+            Right(destinationClass == calleeDeclarationClass)
+          else // INVOKEVIRTUAL, INVOKESTATIC, INVOKEINTERFACE and INVOKESPECIAL of constructors
+            memberIsAccessible(methodNode.access, methodDeclClass, methodRefClass, destinationClass)
+      } yield {
+        if (res) {
+          // ensure the result ClassBType is cached (for stack map frame calculation)
+          val toLoad = descToLoad
+          if (toLoad != null) bTypeForDescriptorFromClassfile(toLoad)
+        }
+        res
+      }
+    }
+
     /*
      * Check if `instruction` can be transplanted to `destinationClass`.
      *
@@ -1196,16 +1246,7 @@ abstract class Inliner {
         classIsAccessible(bTypeForDescriptorOrInternalNameFromClassfile(ma.desc), destinationClass)
 
       case fi: FieldInsnNode =>
-        val fieldRefClass = classBTypeFromParsedClassfile(fi.owner)
-        for {
-          (fieldNode, fieldDeclClassNode) <- byteCodeRepository.fieldNode(fieldRefClass.internalName, fi.name, fi.desc): Either[OptimizerWarning, (FieldNode, InternalName)]
-          fieldDeclClass                  =  classBTypeFromParsedClassfile(fieldDeclClassNode)
-          res                             <- memberIsAccessible(fieldNode.access, fieldDeclClass, fieldRefClass, destinationClass)
-        } yield {
-          // ensure the result ClassBType is cached (for stack map frame calculation)
-          if (res) bTypeForDescriptorFromClassfile(fi.desc)
-          res
-        }
+        isAccessibleField(fi.owner, fi.name, fi.desc)
 
       case mi: MethodInsnNode =>
         if (mi.owner.charAt(0) == '[') {
@@ -1214,28 +1255,7 @@ abstract class Inliner {
           // array methods are accessible
           Right(true)
         } else {
-          def canInlineCall(opcode: Int, methodFlags: Int, methodDeclClass: ClassBType, methodRefClass: ClassBType): Either[OptimizerWarning, Boolean] = {
-            opcode match {
-              case INVOKESPECIAL if mi.name != GenBCode.INSTANCE_CONSTRUCTOR_NAME =>
-                // invokespecial is used for private method calls, super calls and instance constructor calls.
-                // private method and super calls can only be inlined into the same class.
-                Right(destinationClass == calleeDeclarationClass)
-
-              case _ => // INVOKEVIRTUAL, INVOKESTATIC, INVOKEINTERFACE and INVOKESPECIAL of constructors
-                memberIsAccessible(methodFlags, methodDeclClass, methodRefClass, destinationClass)
-            }
-          }
-
-          val methodRefClass = classBTypeFromParsedClassfile(mi.owner)
-          for {
-            (methodNode, methodDeclClassNode) <- byteCodeRepository.methodNode(methodRefClass.internalName, mi.name, mi.desc): Either[OptimizerWarning, (MethodNode, InternalName)]
-            methodDeclClass                   =  classBTypeFromParsedClassfile(methodDeclClassNode)
-            res                               <- canInlineCall(mi.getOpcode, methodNode.access, methodDeclClass, methodRefClass)
-          } yield {
-            // ensure the result ClassBType is cached (for stack map frame calculation)
-            if (res) bTypeForDescriptorFromClassfile(Type.getReturnType(mi.desc).getDescriptor)
-            res
-          }
+          isAccessibleMethod(mi.owner, mi.name, mi.desc, Type.getReturnType(mi.desc).getDescriptor, mi.getOpcode == INVOKESPECIAL)
         }
 
       case _: InvokeDynamicInsnNode if destinationClass == calleeDeclarationClass =>
@@ -1291,23 +1311,24 @@ abstract class Inliner {
         // the implMethod is public, lambdaMetaFactory doesn't use the Lookup object's extended
         // capability, and we can safely inline the instruction into a different class.
 
-        val methodRefClass = classBTypeFromParsedClassfile(implMethod.getOwner)
-        for {
-          (methodNode, methodDeclClassNode) <- byteCodeRepository.methodNode(methodRefClass.internalName, implMethod.getName, implMethod.getDesc): Either[OptimizerWarning, (MethodNode, InternalName)]
-          methodDeclClass                   =  classBTypeFromParsedClassfile(methodDeclClassNode)
-          res                               <- memberIsAccessible(methodNode.access, methodDeclClass, methodRefClass, destinationClass)
-        } yield {
-          // ensure the result ClassBType is cached (for stack map frame calculation)
-          if (res) bTypeForDescriptorFromClassfile(Type.getReturnType(indy.desc).getDescriptor)
-          res
-        }
+        isAccessibleMethod(implMethod.getOwner, implMethod.getName, implMethod.getDesc, Type.getReturnType(indy.desc).getDescriptor)
 
       case _: InvokeDynamicInsnNode => Left(UnknownInvokeDynamicInstruction)
 
       case ci: LdcInsnNode => ci.cst match {
-        case t: asm.Type => classIsAccessible(bTypeForDescriptorOrInternalNameFromClassfile(t.getInternalName), destinationClass)
-          // TODO: method handle -- check if method accessible?
-        case _           => Right(true)
+        case t: asm.Type =>
+          classIsAccessible(bTypeForDescriptorOrInternalNameFromClassfile(t.getInternalName), destinationClass)
+        case h: asm.Handle =>
+          h.getTag match {
+            case H_GETFIELD | H_GETSTATIC | H_PUTFIELD | H_PUTSTATIC =>
+              isAccessibleField(h.getOwner, h.getName, h.getDesc)
+            case tag =>
+              isAccessibleMethod(h.getOwner, h.getName, h.getDesc, isInvokeSpecial = tag == H_INVOKESPECIAL)
+          }
+        case _: asm.ConstantDynamic =>
+          Right(destinationClass == calleeDeclarationClass) // same condition as for indy instructions above
+        case _ =>
+          Right(true)
       }
 
       case _ => Right(true)

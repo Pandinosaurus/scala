@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -12,7 +12,7 @@
 
 package scala.annotation
 
-/** Mark an element unused for a given context.
+/** Marks an element unused for a given context.
  *
  *  Unused warnings are suppressed for elements known to be unused.
  *

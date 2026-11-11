@@ -3,12 +3,10 @@ package settings
 
 import org.junit.Assert._
 import org.junit.Test
-import org.junit.runner.RunWith
-import org.junit.runners.JUnit4
 import scala.tools.testkit.AssertUtil.assertThrows
 
-@RunWith(classOf[JUnit4])
 class SettingsTest {
+  import SettingsTest._
   private def settings = new MutableSettings(msg => throw new IllegalArgumentException(msg))
 
   @Test def booleanSettingColon(): Unit = {
@@ -251,20 +249,20 @@ class SettingsTest {
   }
   @Test def `wildcard doesn't disable everything`(): Unit = {
     val settings = new Settings()
-    settings.processArguments("-opt:_" :: Nil, true)
+    settings.processArguments("-opt:_" :: Nil, processAll = true)
     assertTrue("has the choice", settings.opt.contains(settings.optChoices.unreachableCode))
     assertTrue("is enabled", settings.optUnreachableCode)
     assertFalse("inliner is not enabled", settings.optInlinerEnabled)
   }
   @Test def `kill switch can be enabled explicitly`(): Unit = {
     val settings = new Settings()
-    settings.processArguments("-opt:unreachable-code,none" :: Nil, true)
+    settings.processArguments("-opt:unreachable-code,none" :: Nil, processAll = true)
     assertTrue("has the choice", settings.opt.contains(settings.optChoices.unreachableCode))
     assertFalse("is not enabled", settings.optUnreachableCode)
   }
   @Test def `kill switch disables inline`(): Unit = {
     val settings = new Settings()
-    settings.processArguments("-opt:inline:**" :: "-opt:none" :: Nil, true)
+    settings.processArguments("-opt:inline:**" :: "-opt:none" :: Nil, processAll = true)
     assertTrue("has the choice", settings.optInlineFrom.nonEmpty)
     assertFalse("is not enabled", settings.optInlinerEnabled)
   }
@@ -272,7 +270,7 @@ class SettingsTest {
     import scala.collection.mutable.ListBuffer
     val errors   = ListBuffer.empty[String]
     val settings = new Settings(errors.addOne)
-    val (ok, rest) = settings.processArguments("-Vinline" :: "-Xlint" :: Nil, true)
+    val (ok, rest) = settings.processArguments("-Vinline" :: "-Xlint" :: Nil, processAll = true)
     assertFalse("processing should fail", ok)
     assertEquals("processing stops at bad option", 2, rest.length)
     assertEquals(2, errors.size)  // missing arg and bad option
@@ -281,7 +279,7 @@ class SettingsTest {
     import scala.collection.mutable.ListBuffer
     val errors   = ListBuffer.empty[String]
     val settings = new Settings(errors.addOne)
-    val (ok, rest) = settings.processArguments("-Wconf" :: "help" :: "-Vdebug" :: "x.scala" :: Nil, true)
+    val (ok, rest) = settings.processArguments("-Wconf" :: "help" :: "-Vdebug" :: "x.scala" :: Nil, processAll = true)
     assertTrue("processing should succeed", ok)
     assertEquals("processing stops at argument", 1, rest.length)
     assertEquals("processing stops at the correct argument", "x.scala", rest.head)
@@ -291,7 +289,7 @@ class SettingsTest {
   }
   @Test def `t12098 MultiStringSetting prepends`(): Unit = {
     val settings = new Settings(msg => fail(s"Unexpected error: $msg"))
-    val (ok, rest) = settings.processArguments("-Wconf:cat=lint-missing-interpolator:ws" :: "-Xlint" :: "x.scala" :: Nil, true)
+    val (ok, rest) = settings.processArguments("-Wconf:cat=lint-missing-interpolator:ws" :: "-Xlint" :: "x.scala" :: Nil, processAll = true)
     assertTrue("processing should succeed", ok)
     assertTrue(settings.warnMissingInterpolator)
     assertTrue(settings.lintDeprecation)
@@ -306,7 +304,6 @@ class SettingsTest {
       val d = Choice("d")
     }
     val m = s.MultiChoiceSetting("-m", "args", "magic sauce", mChoices, Some(List("a")))
-    println(s"m $m has value ${m.value}")
 
     def check(args: String*)(t: s.MultiChoiceSetting[mChoices.type] => Boolean): Boolean = {
       m.clear()
@@ -348,4 +345,66 @@ class SettingsTest {
     assertFalse(s.optInlinerEnabled)
     assertTrue(s.optBoxUnbox)
   }
+  @Test def `print args to reporter`: Unit = {
+    val s = settings
+    val args = "-Vprint-args" :: "-" :: Nil
+    val (ok, rest) = s.processArguments(args, processAll = true)
+    assertTrue(ok)
+    assertTrue(rest.isEmpty)
+    assertFalse(s.isInfo)
+    assertTrue(s.printArgs.isSetByUser)
+  }
+  @Test def `name-based phases setting accepts tilde prefix`: Unit = {
+    val start = new Phase(null) { def name = "start"; def run() = () }
+    val chunk = new Phase(start) { def name = "chunker"; def run() = () }
+    val clean = new Phase(chunk) { def name = "clean"; def run() = () }
+    val go    = new Phase(clean) { def name = "go"; def run() = () }
+    val end   = new Phase(go) { def name = "end"; def run() = () }
+    val s = new MutableSettings(msg => throw new IllegalArgumentException(msg))
+    val ps = new s.PhasesSetting("-Yp", descr="", default="")
+    s.allSettings(ps.name) = ps
+    val args = List("-Yp:clean,~chunker,3")
+    val (ok, residual) = s.processArguments(args, processAll = true)
+    assertTrue(ok)
+    assertTrue(residual.isEmpty)
+    assertTrue(ps.contains("clean"))
+    assertFalse(ps.contains("chunker"))
+    assertTrue(ps.contains("~chunker"))
+    assertFalse(ps.contains("start"))
+    assertFalse(ps.contains("end"))
+    assertTrue(ps.containsPhase(clean))
+    assertTrue(ps.containsPhase(chunk))
+    assertTrue(ps.containsPhase(start))
+    assertTrue(ps.containsPhase(start.next))
+    assertTrue(ps.contains(s"~${start.next.name}"))
+    assertTrue(ps.containsPhase(go))
+    assertTrue(ps.containsId(go.id))
+    assertFalse(ps.containsPhase(end))
+    assertFalse(ps.containsId(end.id))
+  }
+  @Test def `phases setting accepts all or underscore`: Unit = {
+    val start = new Phase(null) { def name = "start"; def run() = () }
+    def check(args: String*): MutableSettings#PhasesSetting = {
+      val s = new MutableSettings(msg => throw new IllegalArgumentException(msg))
+      val ps = new s.PhasesSetting("-Yp", descr="", default="")
+      s.allSettings(ps.name) = ps
+      val (ok, residual) = s.processArguments(args.toList, processAll = true)
+      assertTrue(ok)
+      assertTrue(residual.isEmpty)
+      ps
+    }
+    assertTrue(check("-Yp:start").containsPhase(start))
+    assertTrue(check("-Yp:start").contains("start"))
+    assertTrue(check("-Yp:start").containsName("start"))
+    assertTrue(check("-Yp:all").containsPhase(start))
+    assertTrue(check("-Yp:all").contains("start"))
+    assertFalse(check("-Yp:all").containsName("start"))
+    assertTrue(check("-Yp:_").containsPhase(start))
+    assertTrue(check("-Yp:junk,_").containsPhase(start))
+  }
+}
+object SettingsTest {
+  import language.implicitConversions
+  /** Avoid deprecated conversion. */
+  @inline implicit def reflectSettingToBoolean(s: MutableSettings#BooleanSetting): Boolean = s.value
 }

@@ -1,4 +1,4 @@
-// scalac: -Xfatal-warnings
+//> using options -Werror
 //
 class Test {
   object severity extends Enumeration

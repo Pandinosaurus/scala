@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -16,12 +16,12 @@ package mutable
 
 import scala.annotation.nowarn
 import scala.collection.Stepper.EfficientSplit
-import scala.collection.generic.DefaultSerializable
+import scala.collection.generic.{CommonErrors, DefaultSerializable}
 import scala.reflect.ClassTag
 
 /** An implementation of a double-ended queue that internally uses a resizable circular buffer.
   *
-  *  Append, prepend, removeFirst, removeLast and random-access (indexed-lookup and indexed-replacement)
+  *  Append, prepend, removeHead, removeLast and random-access (indexed-lookup and indexed-replacement)
   *  take amortized constant time. In general, removals and insertions at i-th index are O(min(i, n-i))
   *  and thus insertions and removals from end/beginning are fast.
   *
@@ -112,7 +112,8 @@ class ArrayDeque[A] protected (
         case srcLength if mustGrow(srcLength + n) =>
           val finalLength = srcLength + n
           val array2 = ArrayDeque.alloc(finalLength)
-          it.copyToArray(array2.asInstanceOf[Array[A]])
+          @annotation.unused val copied = it.copyToArray(array2.asInstanceOf[Array[A]])
+          //assert(copied == srcLength)
           copySliceToArray(srcStart = 0, dest = array2, destStart = srcLength, maxItems = n)
           reset(array = array2, start = 0, end = finalLength)
 
@@ -199,7 +200,8 @@ class ArrayDeque[A] protected (
         if (mustGrow(finalLength)) {
           val array2 = ArrayDeque.alloc(finalLength)
           copySliceToArray(srcStart = 0, dest = array2, destStart = 0, maxItems = idx)
-          it.copyToArray(array2.asInstanceOf[Array[A]], idx)
+          @annotation.unused val copied = it.copyToArray(array2.asInstanceOf[Array[A]], idx)
+          //assert(copied == srcLength)
           copySliceToArray(srcStart = idx, dest = array2, destStart = idx + srcLength, maxItems = n)
           reset(array = array2, start = 0, end = finalLength)
         } else if (2*idx >= n) { // Cheaper to shift the suffix right
@@ -293,7 +295,7 @@ class ArrayDeque[A] protected (
 
   /**
     * Unsafely remove the first element (throws exception when empty)
-    * See also removeHeadOption()
+    * See also removeHeadOption().
     *
     * @param resizeInternalRepr If this is set, resize the internal representation to reclaim space once in a while
     * @throws NoSuchElementException when empty
@@ -320,7 +322,7 @@ class ArrayDeque[A] protected (
 
   /**
     * Unsafely remove the last element (throws exception when empty)
-    * See also removeLastOption()
+    * See also removeLastOption().
     *
     * @param resizeInternalRepr If this is set, resize the internal representation to reclaim space once in a while
     * @throws NoSuchElementException when empty
@@ -338,7 +340,7 @@ class ArrayDeque[A] protected (
   }
 
   /**
-    * Remove all elements from this collection and return the elements while emptying this data structure
+    * Remove all elements from this collection and return the elements while emptying this data structure.
     * @return
     */
   def removeAll(): scala.collection.immutable.Seq[A] = {
@@ -351,7 +353,7 @@ class ArrayDeque[A] protected (
   }
 
   /**
-    * Remove all elements from this collection and return the elements in reverse while emptying this data structure
+    * Remove all elements from this collection and return the elements in reverse while emptying this data structure.
     * @return
     */
   def removeAllReverse(): scala.collection.immutable.Seq[A] = {
@@ -364,7 +366,7 @@ class ArrayDeque[A] protected (
   }
 
   /**
-    * Returns and removes all elements from the left of this queue which satisfy the given predicate
+    * Returns and removes all elements from the left of this queue which satisfy the given predicate.
     *
     *  @param f   the predicate used for choosing elements
     *  @return
@@ -378,7 +380,7 @@ class ArrayDeque[A] protected (
   }
 
   /**
-    * Returns and removes all elements from the right of this queue which satisfy the given predicate
+    * Returns and removes all elements from the right of this queue which satisfy the given predicate.
     *
     *  @param f   the predicate used for choosing elements
     *  @return
@@ -434,13 +436,13 @@ class ArrayDeque[A] protected (
 
   override def isEmpty = start == end
 
-  protected override def klone(): ArrayDeque[A] = new ArrayDeque(array.clone(), start = start, end = end)
+  override protected def klone(): ArrayDeque[A] = new ArrayDeque(array.clone(), start = start, end = end)
 
   override def iterableFactory: SeqFactory[ArrayDeque] = ArrayDeque
 
   /**
     * Note: This does not actually resize the internal representation.
-    * See clearAndShrink if you want to also resize internally
+    * See clearAndShrink if you want to also resize internally.
     */
   def clear(): Unit = {
     while(nonEmpty) {
@@ -449,7 +451,7 @@ class ArrayDeque[A] protected (
   }
 
   /**
-    * Clears this buffer and shrinks to @param size
+    * Clears this buffer and shrinks to @param size.
     *
     * @param size
     * @return
@@ -474,7 +476,7 @@ class ArrayDeque[A] protected (
     copySliceToArray(srcStart = 0, dest = new Array[B](length), destStart = 0, maxItems = length)
 
   /**
-    * Trims the capacity of this ArrayDeque's instance to be the current size
+    * Trims the capacity of this ArrayDeque's instance to be the current size.
     */
   def trimToSize(): Unit = resize(length)
 
@@ -529,7 +531,8 @@ object ArrayDeque extends StrictOptimizedSeqFactory[ArrayDeque] {
     val s = coll.knownSize
     if (s >= 0) {
       val array = alloc(s)
-      IterableOnce.copyElemsToArray(coll, array.asInstanceOf[Array[Any]])
+      val actual = IterableOnce.copyElemsToArray(coll, array.asInstanceOf[Array[Any]])
+      if (actual != s) throw new IllegalStateException(s"Copied $actual of $s")
       new ArrayDeque[B](array, start = 0, end = s)
     } else new ArrayDeque[B]() ++= coll
   }
@@ -546,13 +549,13 @@ object ArrayDeque extends StrictOptimizedSeqFactory[ArrayDeque] {
   final val DefaultInitialSize = 16
 
   /**
-    * We try to not repeatedly resize arrays smaller than this
+    * We try to not repeatedly resize arrays smaller than this.
     */
   private[ArrayDeque] final val StableSize = 128
 
   /**
     * Allocates an array whose size is next power of 2 > `len`
-    * Largest possible len is 1<<30 - 1
+    * Largest possible len is 1<<30 - 1.
     *
     * @param len
     * @return
@@ -577,12 +580,13 @@ trait ArrayDequeOps[A, +CC[_], +C <: AnyRef] extends StrictOptimizedSeqOps[A, CC
   protected def start_+(idx: Int): Int
 
   @inline protected final def requireBounds(idx: Int, until: Int = length): Unit =
-    if (idx < 0 || idx >= until) throw new IndexOutOfBoundsException(s"$idx is out of bounds (min 0, max ${until-1})")
+    if (idx < 0 || idx >= until)
+      throw CommonErrors.indexOutOfBounds(index = idx, max = until - 1)
 
   /**
     * This is a more general version of copyToArray - this also accepts a srcStart unlike copyToArray
     * This copies maxItems elements from this collections srcStart to dest's destStart
-    * If we reach the end of either collections before we could copy maxItems, we simply stop copying
+    * If we reach the end of either collections before we could copy maxItems, we simply stop copying.
     *
     * @param dest
     * @param srcStart
@@ -629,16 +633,8 @@ trait ArrayDequeOps[A, +CC[_], +C <: AnyRef] extends StrictOptimizedSeqOps[A, CC
     }
   }
 
-  override def sliding(window: Int, step: Int): Iterator[C] = {
-    require(window > 0 && step > 0, s"window=$window and step=$step, but both must be positive")
-    length match {
-      case 0 => Iterator.empty
-      case n if n <= window => Iterator.single(slice(0, length))
-      case n =>
-        val lag = if (window > step) window - step else 0
-        Iterator.range(start = 0, end = n - lag, step = step).map(i => slice(i, i + window))
-    }
-  }
+  override def sliding(@deprecatedName("window") size: Int, step: Int): Iterator[C] =
+    super.sliding(size = size, step = step)
 
   override def grouped(n: Int): Iterator[C] = sliding(n, n)
 }

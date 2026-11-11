@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -12,6 +12,7 @@
 
 package scala.tools.nsc.transform.async
 
+import scala.annotation._
 import scala.collection.immutable.ArraySeq
 import scala.collection.mutable
 import scala.reflect.internal.Flags._
@@ -28,7 +29,7 @@ trait LiveVariables extends ExprBuilder {
    *  @param   liftables   the lifted fields
    *  @return              a map which indicates fields which are used for the final time in each state.
    */
-  def fieldsToNullOut(asyncStates: List[AsyncState], finalState: AsyncState,
+  def fieldsToNullOut(asyncStates: List[AsyncState], @unused finalState: AsyncState,
                       liftables: List[Tree]): mutable.LinkedHashMap[Int, (mutable.LinkedHashSet[Symbol], mutable.LinkedHashSet[Symbol])] = {
 
     val liftedSyms = mutable.LinkedHashSet[Symbol]()

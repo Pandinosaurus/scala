@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -43,7 +43,7 @@ final class LongMap[V] private[collection] (defaultEntry: Long => V, initialBuff
     with Serializable {
   import LongMap._
 
-  def this() = this(LongMap.exceptionDefault, 16, true)
+  def this() = this(LongMap.exceptionDefault, 16, initBlank = true)
 
   // TODO: override clear() with an optimization more tailored for efficiency.
   override protected def fromSpecific(coll: scala.collection.IterableOnce[(Long, V)]): LongMap[V] = {
@@ -56,17 +56,17 @@ final class LongMap[V] private[collection] (defaultEntry: Long => V, initialBuff
   override protected def newSpecificBuilder: Builder[(Long, V),LongMap[V]] = new GrowableBuilder(LongMap.empty[V])
 
   /** Creates a new `LongMap` that returns default values according to a supplied key-value mapping. */
-  def this(defaultEntry: Long => V) = this(defaultEntry, 16, true)
+  def this(defaultEntry: Long => V) = this(defaultEntry, 16, initBlank = true)
 
   /** Creates a new `LongMap` with an initial buffer of specified size.
     *
     *  A LongMap can typically contain half as many elements as its buffer size
     *  before it requires resizing.
     */
-  def this(initialBufferSize: Int) = this(LongMap.exceptionDefault, initialBufferSize, true)
+  def this(initialBufferSize: Int) = this(LongMap.exceptionDefault, initialBufferSize, initBlank = true)
 
   /** Creates a new `LongMap` with specified default values and initial buffer size. */
-  def this(defaultEntry: Long => V,  initialBufferSize: Int) = this(defaultEntry,  initialBufferSize,  true)
+  def this(defaultEntry: Long => V,  initialBufferSize: Int) = this(defaultEntry,  initialBufferSize,  initBlank = true)
 
   private[this] var mask = 0
   private[this] var extraKeys: Int = 0
@@ -185,13 +185,17 @@ final class LongMap[V] private[collection] (defaultEntry: Long => V, initialBuff
     else {
       var i = seekEntryOrOpen(key)
       if (i < 0) {
-        // It is possible that the default value computation was side-effecting
-        // Our hash table may have resized or even contain what we want now
-        // (but if it does, we'll replace it)
         val value = {
-          val ok = _keys
+          val oks = _keys
+          val j = i & IndexMask
+          val ok = oks(j)
           val ans = defaultValue
-          if (ok ne _keys) {
+          // Evaluating `defaultValue` may change the map
+          //   - repack: the array is different
+          //   - element added at `j`: since `i < 0`, the key was missing and `ok` is either 0 or MinValue.
+          //     If `defaultValue` added an element at `j` then `_keys(j)` must be different now.
+          //     (`_keys` never contains 0 or MinValue.)
+          if (oks.ne(_keys) || ok != _keys(j)) {
             i = seekEntryOrOpen(key)
             if (i >= 0) _size -= 1
           }
@@ -269,19 +273,14 @@ final class LongMap[V] private[collection] (defaultEntry: Long => V, initialBuff
   }
 
   /** Repacks the contents of this `LongMap` for maximum efficiency of lookup.
-    *
-    *  For maps that undergo a complex creation process with both addition and
-    *  removal of keys, and then are used heavily with no further removal of
-    *  elements, calling `repack` after the end of the creation can result in
-    *  improved performance.  Repacking takes time proportional to the number
-    *  of entries in the map.
-    */
-  def repack(): Unit = {
-    var m = mask
-    if (_size + _vacant >= 0.5*mask && !(_vacant > 0.2*mask)) m = ((m << 1) + 1) & IndexMask
-    while (m > 8 && 8*_size < m) m = m >>> 1
-    repack(m)
-  }
+   *
+   *  For maps that undergo a complex creation process with both addition and
+   *  removal of keys, and then are used heavily with no further removal of
+   *  elements, calling `repack` after the end of the creation can result in
+   *  improved performance.  Repacking takes time proportional to the number
+   *  of entries in the map.
+   */
+  def repack(): Unit = repack(repackMask(mask, _size = _size, _vacant = _vacant))
 
   override def put(key: Long, value: V): Option[V] = {
     if (key == -key) {
@@ -292,7 +291,7 @@ final class LongMap[V] private[collection] (defaultEntry: Long => V, initialBuff
         ans
       }
       else {
-        val ans = if ((extraKeys&2) == 1) Some(minValue.asInstanceOf[V]) else None
+        val ans = if ((extraKeys&2) == 2) Some(minValue.asInstanceOf[V]) else None
         minValue = value.asInstanceOf[AnyRef]
         extraKeys |= 2
         ans
@@ -455,7 +454,7 @@ final class LongMap[V] private[collection] (defaultEntry: Long => V, initialBuff
   override def clone(): LongMap[V] = {
     val kz = java.util.Arrays.copyOf(_keys, _keys.length)
     val vz = java.util.Arrays.copyOf(_values,  _values.length)
-    val lm = new LongMap[V](defaultEntry, 1, false)
+    val lm = new LongMap[V](defaultEntry, 1, initBlank = false)
     lm.initializeTo(mask, extraKeys, zeroValue, minValue, _size, _vacant, kz,  vz)
     lm
   }
@@ -522,7 +521,7 @@ final class LongMap[V] private[collection] (defaultEntry: Long => V, initialBuff
   def mapValuesNow[V1](f: V => V1): LongMap[V1] = {
     val zv = if ((extraKeys & 1) == 1) f(zeroValue.asInstanceOf[V]).asInstanceOf[AnyRef] else null
     val mv = if ((extraKeys & 2) == 2) f(minValue.asInstanceOf[V]).asInstanceOf[AnyRef] else null
-    val lm = new LongMap[V1](LongMap.exceptionDefault,  1,  false)
+    val lm = new LongMap[V1](LongMap.exceptionDefault,  1,  initBlank = false)
     val kz = java.util.Arrays.copyOf(_keys, _keys.length)
     val vz = new Array[AnyRef](_values.length)
     var i,j = 0
@@ -562,10 +561,22 @@ final class LongMap[V] private[collection] (defaultEntry: Long => V, initialBuff
     this
   }
 
+  /** An overload of `map` which produces a `LongMap`.
+   *
+   *  @param f the mapping function
+   */
   def map[V2](f: ((Long, V)) => (Long, V2)): LongMap[V2] = LongMap.from(new View.Map(coll, f))
 
+  /** An overload of `flatMap` which produces a `LongMap`.
+   *
+   *  @param f the mapping function
+   */
   def flatMap[V2](f: ((Long, V)) => IterableOnce[(Long, V2)]): LongMap[V2] = LongMap.from(new View.FlatMap(coll, f))
 
+  /** An overload of `collect` which produces a `LongMap`.
+   *
+   *  @param pf the mapping function
+   */
   def collect[V2](pf: PartialFunction[(Long, V), (Long, V2)]): LongMap[V2] =
     strictOptimizedCollect(LongMap.newBuilder[V2], pf)
 
@@ -575,10 +586,10 @@ final class LongMap[V] private[collection] (defaultEntry: Long => V, initialBuff
 }
 
 object LongMap {
-  private final val IndexMask  = 0x3FFFFFFF
-  private final val MissingBit = 0x80000000
-  private final val VacantBit  = 0x40000000
-  private final val MissVacant = 0xC0000000
+  private final val IndexMask  = 0x3FFF_FFFF
+  private final val MissingBit = 0x8000_0000
+  private final val VacantBit  = 0x4000_0000
+  private final val MissVacant = 0xC000_0000
 
   private val exceptionDefault: Long => Nothing = (k: Long) => throw new NoSuchElementException(k.toString)
 
@@ -665,9 +676,16 @@ object LongMap {
   implicit def toBuildFrom[V](factory: LongMap.type): BuildFrom[Any, (Long, V), LongMap[V]] = ToBuildFrom.asInstanceOf[BuildFrom[Any, (Long, V), LongMap[V]]]
   private object ToBuildFrom extends BuildFrom[Any, (Long, AnyRef), LongMap[AnyRef]] {
     def fromSpecific(from: Any)(it: IterableOnce[(Long, AnyRef)]) = LongMap.from(it)
-    def newBuilder(from: Any) = LongMap.newBuilder[AnyRef]
+    def newBuilder(from: Any): ReusableBuilder[(Long, AnyRef), LongMap[AnyRef]] = LongMap.newBuilder[AnyRef]
   }
 
   implicit def iterableFactory[V]: Factory[(Long, V), LongMap[V]] = toFactory(this)
   implicit def buildFromLongMap[V]: BuildFrom[LongMap[_], (Long, V), LongMap[V]] = toBuildFrom(this)
+
+  private def repackMask(mask: Int, _size: Int, _vacant: Int): Int = {
+    var m = mask
+    if (_size + _vacant >= 0.5*mask && !(_vacant > 0.2*mask)) m = ((m << 1) + 1) & IndexMask
+    while (m > 8 && _size < (m >>> 3)) m = m >>> 1
+    m /*.ensuring(_size <= _ + 1)*/
+  }
 }

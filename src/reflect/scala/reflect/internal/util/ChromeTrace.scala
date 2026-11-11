@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -43,6 +43,7 @@ final class ChromeTrace(f: Path) extends Closeable {
   private val traceWriter = FileUtils.newAsyncBufferedWriter(f)
   private val context = mutable.Stack[JsonContext](TopContext)
   private val tidCache = new ThreadLocal[String]() {
+    @annotation.nowarn("cat=deprecation")
     override def initialValue(): String = f"${Thread.currentThread().getId}%05d"
   }
   objStart()
@@ -165,7 +166,7 @@ final class ChromeTrace(f: Path) extends Closeable {
         else traceWriter.write(",")
       case _ =>
     }
-    context.push(ObjectContext(true))
+    context.push(ObjectContext(first = true))
     traceWriter.write("{")
   }
   private def objEnd(): Unit = {
@@ -174,7 +175,7 @@ final class ChromeTrace(f: Path) extends Closeable {
   }
   private def arrStart(): Unit = {
     traceWriter.write("[")
-    context.push(ArrayContext(true))
+    context.push(ArrayContext(first = true))
   }
   private def arrEnd(): Unit = {
     traceWriter.write("]")
@@ -187,8 +188,8 @@ final class ChromeTrace(f: Path) extends Closeable {
       case oc @ ObjectContext(first) =>
         if (first) oc.first = false
         else traceWriter.write(",")
-      case context =>
-        throw new IllegalStateException("Wrong context: " + context)
+      case otherContext =>
+        throw new IllegalStateException(s"Wrong context: $otherContext")
     }
     traceWriter.write("\"")
     traceWriter.write(name)

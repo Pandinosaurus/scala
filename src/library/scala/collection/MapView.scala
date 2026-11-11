@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -27,6 +27,7 @@ trait MapView[K, +V]
    *
    *  @return the keys of this map as a view.
    */
+  @nowarn("msg=overriding method keys")
   override def keys: Iterable[K] = new MapView.Keys(this)
 
   // Ideally this returns a `View`, but bincompat
@@ -50,9 +51,9 @@ trait MapView[K, +V]
     */
   override def mapValues[W](f: V => W): MapView[K, W] = new MapView.MapValues(this, f)
 
-  override def filter(pred: ((K, V)) => Boolean): MapView[K, V] = new MapView.Filter(this, false, pred)
+  override def filter(pred: ((K, V)) => Boolean): MapView[K, V] = new MapView.Filter(this, isFlipped = false, pred)
 
-  override def filterNot(pred: ((K, V)) => Boolean): MapView[K, V] = new MapView.Filter(this, true, pred)
+  override def filterNot(pred: ((K, V)) => Boolean): MapView[K, V] = new MapView.Filter(this, isFlipped = true, pred)
 
   override def partition(p: ((K, V)) => Boolean): (MapView[K, V], MapView[K, V]) = (filter(p), filterNot(p))
 

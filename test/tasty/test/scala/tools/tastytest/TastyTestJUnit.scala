@@ -3,7 +3,7 @@ package scala.tools.tastytest
 import org.junit.{Test => test, BeforeClass => setup, AfterClass => teardown}
 import org.junit.Assert._
 
-import scala.util.{Try, Failure, Properties}
+import scala.util.Properties
 
 import TastyTestJUnit._
 
@@ -16,7 +16,18 @@ class TastyTestJUnit {
     outDir                  = None,
     additionalSettings      = Nil,
     additionalDottySettings = Nil
-  ).eval
+  ).get
+
+  @test def runPipelined(): Unit = {
+    TastyTest.runPipelinedSuite(
+      src                     = "run-pipelined",
+      srcRoot                 = assertPropIsSet(propSrc),
+      pkgName                 = assertPropIsSet(propPkgName),
+      outDirs                 = None,
+      additionalSettings      = Nil,
+      additionalDottySettings = Seq("-Yexplicit-nulls"), // test flexible types from Java
+    ).get
+  }
 
   @test def pos(): Unit = TastyTest.posSuite(
     src                     = "pos",
@@ -25,8 +36,9 @@ class TastyTestJUnit {
     outDir                  = None,
     additionalSettings      = Nil,
     additionalDottySettings = Nil
-  ).eval
+  ).get
 
+  /** false positives that should fail, but work when annotations are not read */
   @test def posFalseNoAnnotations(): Unit = TastyTest.posSuite(
     src                     = "pos-false-noannotations",
     srcRoot                 = assertPropIsSet(propSrc),
@@ -34,7 +46,16 @@ class TastyTestJUnit {
     outDir                  = None,
     additionalSettings      = Seq("-Ytasty-no-annotations"),
     additionalDottySettings = Nil
-  ).eval
+  ).get
+
+  @test def posDoctool(): Unit = TastyTest.posDocSuite(
+    src                     = "pos-doctool",
+    srcRoot                 = assertPropIsSet(propSrc),
+    pkgName                 = assertPropIsSet(propPkgName),
+    outDir                  = None,
+    additionalSettings      = Nil,
+    additionalDottySettings = Nil
+  ).get
 
   @test def neg(): Unit = TastyTest.negSuite(
     src                     = "neg",
@@ -43,7 +64,18 @@ class TastyTestJUnit {
     outDir                  = None,
     additionalSettings      = Nil,
     additionalDottySettings = Nil
-  ).eval
+  ).get
+
+  @test def negPipelined(): Unit = {
+    TastyTest.negPipelinedSuite(
+      src                     = "neg-pipelined",
+      srcRoot                 = assertPropIsSet(propSrc),
+      pkgName                 = assertPropIsSet(propPkgName),
+      outDirs                 = None,
+      additionalSettings      = Nil,
+      additionalDottySettings = Seq("-Yexplicit-nulls") // test flexible types from Java
+    ).get
+  }
 
   @test def negMoveMacros(): Unit = TastyTest.negChangePreSuite(
     src                     = "neg-move-macros",
@@ -52,7 +84,7 @@ class TastyTestJUnit {
     outDirs                 = None,
     additionalSettings      = Nil,
     additionalDottySettings = Nil
-  ).eval
+  ).get
 
   @test def negIsolated(): Unit = TastyTest.negSuiteIsolated(
     src                     = "neg-isolated",
@@ -61,7 +93,16 @@ class TastyTestJUnit {
     outDirs                 = None,
     additionalSettings      = Nil,
     additionalDottySettings = Nil
-  ).eval
+  ).get
+
+  @test def negFullCircle(): Unit = TastyTest.negFullCircleSuite(
+    src                     = "neg-full-circle",
+    srcRoot                 = assertPropIsSet(propSrc),
+    pkgName                 = assertPropIsSet(propPkgName),
+    outDir                  = None,
+    additionalSettings      = Nil,
+    additionalDottySettings = Nil
+  ).get
 
   val propSrc     = "tastytest.src"
   val propPkgName = "tastytest.packageName"
@@ -87,12 +128,5 @@ object TastyTestJUnit {
   @teardown
   def finish(): Unit = {
     _dottyClassLoader = null
-  }
-
-  final implicit class TryOps(val op: Try[Unit]) extends AnyVal {
-    def eval: Unit = op match {
-      case Failure(err) => fail(err.toString)
-      case _ => ()
-    }
   }
 }

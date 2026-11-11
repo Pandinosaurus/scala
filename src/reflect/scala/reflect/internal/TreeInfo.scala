@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -53,7 +53,7 @@ abstract class TreeInfo {
     case EmptyTree                     => true
     case Import(_, _)                  => true
     case TypeDef(_, _, _, _)           => true
-    case DefDef(mods, _, _, _, _, __)  => mods.isDeferred
+    case DefDef(mods, _, _, _, _, _)   => mods.isDeferred
     case ValDef(mods, _, _, _)         => mods.isDeferred
     case _ => false
   }
@@ -351,6 +351,42 @@ abstract class TreeInfo {
     case _                                    => false
   }
 
+  /** Is tree an application with result `this.type`?
+   *  Accept `b.addOne(x)` and also `xs(i) += x`
+   *  where the op is an assignment operator.
+   */
+  def isThisTypeResult(tree: Tree): Boolean = tree match {
+    case Applied(fun @ Select(receiver, op), _, argss) =>
+      tree.tpe match {
+        case ThisType(sym) =>
+          sym == receiver.symbol
+        case SingleType(_, sym) =>
+          sym == receiver.symbol || argss.exists(_.exists(sym == _.symbol))
+        case _ =>
+          def checkSingle(sym: Symbol): Boolean =
+            (sym == receiver.symbol) || {
+              receiver match {
+                case Apply(_, _) => Precedence(op.decoded).level == 0         // xs(i) += x
+                case _ => receiver.symbol != null &&
+                  (receiver.symbol.isGetter || receiver.symbol.isField)       // xs.addOne(x) for var xs
+              }
+            }
+          @tailrec def loop(mt: Type): Boolean = mt match {
+            case MethodType(_, restpe) =>
+              restpe match {
+                case ThisType(sym) => checkSingle(sym)
+                case SingleType(_, sym) => checkSingle(sym)
+                case _ => loop(restpe)
+              }
+            case PolyType(_, restpe) => loop(restpe)
+            case _ => false
+          }
+          fun.symbol != null && loop(fun.symbol.info)
+      }
+    case _ =>
+      tree.tpe.isInstanceOf[ThisType]
+  }
+
   /**
    * Named arguments can transform a constructor call into a block, e.g.
    *   <init>(b = foo, a = bar)
@@ -488,7 +524,7 @@ abstract class TreeInfo {
         case _ => false
       }
       case md: MemberDef => !md.mods.isSynthetic
-      case tree => true
+      case _ => true
     }
 
     def lazyValDefRhs(body: Tree) =
@@ -509,7 +545,7 @@ abstract class TreeInfo {
             copyValDef(vd)(mods = vdMods, name = dname, rhs = vdRhs)
         }.getOrElse(vd)
       // for abstract and some lazy val/vars
-      case dd @ DefDef(mods, name, _, _, tpt, rhs) if mods.hasAccessorFlag =>
+      case DefDef(mods, name, _, _, tpt, rhs) if mods.hasAccessorFlag =>
         // transform getter mods to field
         val vdMods = (if (!mods.hasStableFlag) mods | Flags.MUTABLE else mods &~ Flags.STABLE) &~ Flags.ACCESSOR
         ValDef(vdMods, name, tpt, rhs)
@@ -652,7 +688,7 @@ abstract class TreeInfo {
   def catchesThrowable(cdef: CaseDef) = (
     cdef.guard.isEmpty && (unbind(cdef.pat) match {
       case Ident(nme.WILDCARD) => true
-      case i@Ident(name)       => hasNoSymbol(i)
+      case i@Ident(_)          => hasNoSymbol(i)
       case _                   => false
     })
   )
@@ -746,6 +782,17 @@ abstract class TreeInfo {
     ((sym ne null) && sym.initialize.isTrait)
   }
 
+  def hasExplicitUnit(tree: Tree): Boolean =
+    explicitlyUnit(tree) || {
+      tree match {
+        case Apply(f, _)           => hasExplicitUnit(f)
+        case TypeApply(f, _)       => hasExplicitUnit(f)
+        case AppliedTypeTree(f, _) => hasExplicitUnit(f)
+        case Block(_, expr)        => hasExplicitUnit(expr)
+        case _                     => false
+      }
+    }
+
   /** Applications in Scala can have one of the following shapes:
    *
    *    1) naked core: Ident(_) or Select(_, _) or basically anything else
@@ -806,7 +853,7 @@ abstract class TreeInfo {
     def core: Tree = callee match {
       case TypeApply(fn, _)       => fn
       case AppliedTypeTree(fn, _) => fn
-      case tree                   => tree
+      case callee                 => callee
     }
 
     /** The type arguments of the `callee`.
@@ -833,7 +880,7 @@ abstract class TreeInfo {
   /** Returns a wrapper that knows how to destructure and analyze applications.
    */
   final def dissectApplied(tree: Tree) = new Applied(tree)
-  /** Equivalent ot disectApplied(tree).core, but more efficient */
+  /** Equivalent to dissectApplied(tree).core, but more efficient */
   @scala.annotation.tailrec
   final def dissectCore(tree: Tree): Tree = tree match {
     case TypeApply(fun, _) =>
@@ -862,6 +909,19 @@ abstract class TreeInfo {
 
     def unapply(tree: Tree): Some[(Tree, List[Tree], List[List[Tree]])] =
       unapply(dissectApplied(tree))
+  }
+
+  /**
+   * Deconstructs an application into fun (typically a Select), targs and argss.
+   * Unlike `Applied`, only matches if the tree is actually an application (Apply and / or TypeApply).
+   */
+  object Application {
+    def unapply(tree: Tree): Option[(Tree, List[Tree], List[List[Tree]])] = {
+      val ap = new Applied(tree)
+      val core = ap.core
+      if (core eq tree) None
+      else Some((core, ap.targs, ap.argss))
+    }
   }
 
   /** Does list of trees start with a definition of
@@ -955,8 +1015,8 @@ abstract class TreeInfo {
       case _ => EmptyTree
     }
 
-    def unapply(tree: Tree) = refPart(tree) match {
-      case ref: RefTree => {
+    def unapply(tree: Tree): Option[(Boolean, Boolean, Symbol, Symbol, List[Tree])] = refPart(tree) match {
+      case ref: RefTree =>
         val qual = ref.qualifier
         val isBundle = definitions.isMacroBundleType(qual.tpe)
         val isBlackbox =
@@ -972,8 +1032,7 @@ abstract class TreeInfo {
             if (qualSym.isModule) qualSym.moduleClass else qualSym
           }
         Some((isBundle, isBlackbox, owner, ref.symbol, dissectApplied(tree).targs))
-      }
-      case _  => None
+      case _ => None
     }
   }
 
@@ -981,7 +1040,7 @@ abstract class TreeInfo {
   final def isNullaryInvocation(tree: Tree): Boolean =
     tree.symbol != null && tree.symbol.isMethod && (tree match {
       case TypeApply(fun, _) => isNullaryInvocation(fun)
-      case tree: RefTree => true
+      case _: RefTree => true
       case _ => false
     })
 
@@ -1047,7 +1106,7 @@ trait MacroAnnotionTreeInfo { self: TreeInfo =>
           } yield AnnotationZipper(ann, vparam1, PatchedSyntacticClassDef(mods, name, tparams, constrMods, vparamss1, earlyDefs, parents, selfdef, body))
           czippers ++ tzippers ++ vzippers
         }
-      case SyntacticTraitDef(mods, name, tparams, earlyDefs, parents, selfdef, body) =>
+      case SyntacticTraitDef(mods, name@_, tparams, earlyDefs@_, parents@_, selfdef@_, body@_) =>
         val tdef = tree.asInstanceOf[ClassDef]
         val czippers = mods.annotations.map(ann => {
           val annottee = tdef.copy(mods = mods.mapAnnotations(_ diff List(ann)))

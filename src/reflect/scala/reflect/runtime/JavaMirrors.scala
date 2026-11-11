@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,31 +14,30 @@ package scala
 package reflect
 package runtime
 
-import scala.language.existentials
-
-import scala.ref.WeakReference
-import scala.collection.mutable.WeakHashMap
-import scala.collection.immutable.ArraySeq
-
+import java.io.IOException
 import java.lang.{ Class => jClass, Package => jPackage }
+import java.lang.annotation.{ Annotation => jAnnotation }
+import java.lang.ref.{ WeakReference => jWeakReference }
 import java.lang.reflect.{
   Method => jMethod, Constructor => jConstructor, Field => jField,
   Member => jMember, Type => jType, TypeVariable => jTypeVariable,
   Parameter => jParameter, GenericDeclaration, GenericArrayType,
   ParameterizedType, WildcardType, AnnotatedElement }
-import java.lang.annotation.{ Annotation => jAnnotation }
-import java.io.IOException
-import java.lang.ref.{ WeakReference => jWeakReference }
+import java.nio.charset.StandardCharsets.UTF_8
 
+import scala.annotation.nowarn
+import scala.collection.immutable.ArraySeq
+import scala.collection.mutable.{ListBuffer, WeakHashMap}
+import scala.language.existentials
+import scala.ref.WeakReference
+import scala.reflect.api.TypeCreator
 import scala.reflect.internal.{ JavaAccFlags, MissingRequirementError }
+import scala.runtime.{BoxesRunTime, ClassValueCompat, ScalaRunTime}
+import internal.Flags._
 import internal.pickling.ByteCodecs
 import internal.pickling.UnPickler
-import scala.collection.mutable.ListBuffer
-import internal.Flags._
+import internal.util.StringContextStripMarginOps
 import ReflectionUtils._
-import scala.annotation.nowarn
-import scala.reflect.api.TypeCreator
-import scala.runtime.{BoxesRunTime, ClassValueCompat, ScalaRunTime}
 
 private[scala] trait JavaMirrors extends internal.SymbolTable with api.JavaUniverse with TwoWayCaches { thisUniverse: SymbolTable =>
 
@@ -353,9 +352,10 @@ private[scala] trait JavaMirrors extends internal.SymbolTable with api.JavaUnive
     // because both AnyVal and its primitive descendants define their own getClass methods
     private def isGetClass(meth: MethodSymbol) = (meth.name string_== "getClass") && meth.paramss.flatten.isEmpty
     private def isStringConcat(meth: MethodSymbol) = meth == String_+ || (meth.owner.isPrimitiveValueClass && meth.returnType =:= StringClass.toType)
-    lazy val bytecodelessMethodOwners = Set[Symbol](AnyClass, AnyValClass, AnyRefClass, ObjectClass, ArrayClass) ++ ScalaPrimitiveValueClasses
-    lazy val bytecodefulObjectMethods = Set[Symbol](Object_clone, Object_equals, Object_finalize, Object_hashCode, Object_toString,
-                                        Object_notify, Object_notifyAll) ++ ObjectClass.info.member(nme.wait_).asTerm.alternatives.map(_.asMethod)
+    lazy val bytecodelessMethodOwners =
+      Set[Symbol](AnyClass, AnyValClass, AnyRefClass, ObjectClass, ArrayClass) ++ ScalaPrimitiveValueClasses
+    lazy val bytecodefulObjectMethods =
+      Set[Symbol](Object_clone, Object_equals, Object_finalize, Object_hashCode, Object_toString, Object_notify, Object_notifyAll) ++ Object_wait.alternatives
     private def isBytecodelessMethod(meth: MethodSymbol): Boolean = {
       if (isGetClass(meth) || isStringConcat(meth) || meth.owner.isPrimitiveValueClass || meth == runDefinitions.Predef_classOf || meth.isMacro) return true
       bytecodelessMethodOwners(meth.owner) && !bytecodefulObjectMethods(meth)
@@ -669,7 +669,7 @@ private[scala] trait JavaMirrors extends internal.SymbolTable with api.JavaUnive
         loadBytes[String]("scala.reflect.ScalaSignature") match {
           case Some(ssig) =>
             info(s"unpickling Scala $clazz and $module, owner = ${clazz.owner}")
-            val bytes = ssig.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            val bytes = ssig.getBytes(UTF_8)
             val len = ByteCodecs.decode(bytes)
             assignAssociatedFile(clazz, module, jclazz)
             unpickler.unpickle(bytes take len, 0, clazz, module, jclazz.getName)
@@ -678,7 +678,7 @@ private[scala] trait JavaMirrors extends internal.SymbolTable with api.JavaUnive
             loadBytes[Array[String]]("scala.reflect.ScalaLongSignature") match {
               case Some(slsig) =>
                 info(s"unpickling Scala $clazz and $module with long Scala signature")
-                val encoded = slsig flatMap (_.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                val encoded = slsig.flatMap(_.getBytes(UTF_8))
                 val len = ByteCodecs.decode(encoded)
                 val decoded = encoded.take(len)
                 assignAssociatedFile(clazz, module, jclazz)
@@ -790,7 +790,7 @@ private[scala] trait JavaMirrors extends internal.SymbolTable with api.JavaUnive
         assert(sym == clazz || (module != NoSymbol && (sym == module || sym == module.moduleClass)), sym)
 
         assignAssociatedFile(clazz, module, jclazz)
-        propagatePackageBoundary(jclazz, relatedSymbols: _*)
+        packageAccessBoundaries.propagatePackageBoundary(jclazz, relatedSymbols: _*)
         copyAnnotations(clazz, jclazz)
         // to do: annotations to set also for module?
 
@@ -1204,7 +1204,7 @@ private[scala] trait JavaMirrors extends internal.SymbolTable with api.JavaUnive
           .setInfo(typeToScala(jfield.getGenericType))
 
       fieldCache.enter(jfield, field)
-      propagatePackageBoundary(jfield, field)
+      packageAccessBoundaries.propagatePackageBoundary(jfield, field)
       copyAnnotations(field, jfield)
       markAllCompleted(field)
       field
@@ -1231,7 +1231,7 @@ private[scala] trait JavaMirrors extends internal.SymbolTable with api.JavaUnive
       val params = jparamsAsScala(meth, jmeth.getParameters.toList)
       val resulttpe = typeToScala(jmeth.getGenericReturnType)
       setMethType(meth, tparams, params, resulttpe)
-      propagatePackageBoundary(jmeth.javaFlags, meth)
+      packageAccessBoundaries.propagatePackageBoundary(jmeth.javaFlags, meth)
       copyAnnotations(meth, jmeth)
       if (jmeth.javaFlags.isVarargs) meth modifyInfo arrayToRepeated
       if (jmeth.getDefaultValue != null) meth.addAnnotation(AnnotationDefaultAttr)
@@ -1256,7 +1256,7 @@ private[scala] trait JavaMirrors extends internal.SymbolTable with api.JavaUnive
       val tparams = jconstr.getTypeParameters.toList map createTypeParameter
       val params = jparamsAsScala(constr, jconstr.getParameters.toList)
       setMethType(constr, tparams, params, clazz.tpe)
-      propagatePackageBoundary(jconstr.javaFlags, constr)
+      packageAccessBoundaries.propagatePackageBoundary(jconstr.javaFlags, constr)
       copyAnnotations(constr, jconstr)
       if (jconstr.javaFlags.isVarargs) constr modifyInfo arrayToRepeated
       markAllCompleted(constr)

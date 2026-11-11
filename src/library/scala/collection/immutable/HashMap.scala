@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -57,7 +57,7 @@ final class HashMap[K, +V] private[immutable] (private[immutable] val rootNode: 
 
   override def keySet: Set[K] = if (size == 0) Set.empty else new HashKeySet
 
-  private final class HashKeySet extends ImmutableKeySet {
+  private[immutable] final class HashKeySet extends ImmutableKeySet {
 
     private[this] def newKeySetOrThis(newHashMap: HashMap[K, _]): Set[K] =
       if (newHashMap eq HashMap.this) this else newHashMap.keySet
@@ -144,7 +144,7 @@ final class HashMap[K, +V] private[immutable] (private[immutable] val rootNode: 
     rootNode.getOrElse(key, keyUnimprovedHash, keyHash, 0, default)
   }
 
-  @`inline` private[this] def newHashMapOrThis[V1 >: V](newRootNode: BitmapIndexedMapNode[K, V1]): HashMap[K, V1] =
+  @inline private[this] def newHashMapOrThis[V1 >: V](newRootNode: BitmapIndexedMapNode[K, V1]): HashMap[K, V1] =
     if (newRootNode eq rootNode) this else new HashMap(newRootNode)
 
   def updated[V1 >: V](key: K, value: V1): HashMap[K, V1] = {
@@ -167,7 +167,7 @@ final class HashMap[K, +V] private[immutable] (private[immutable] val rootNode: 
       else {
         val newNode = rootNode.concat(hm.rootNode, 0)
         if (newNode eq hm.rootNode) hm
-        else newHashMapOrThis(rootNode.concat(hm.rootNode, 0))
+        else newHashMapOrThis(newNode)
       }
     case hm: mutable.HashMap[K @unchecked, V @unchecked] =>
       val iter = hm.nodeIterator
@@ -184,6 +184,27 @@ final class HashMap[K, +V] private[immutable] (private[immutable] val rootNode: 
           while (iter.hasNext) {
             val next = iter.next()
             val originalHash = hm.unimproveHash(next.hash)
+            shallowlyMutableNodeMap = current.updateWithShallowMutations(next.key, next.value, originalHash, improve(originalHash), 0, shallowlyMutableNodeMap)
+          }
+          return new HashMap(current)
+        }
+      }
+      this
+    case lhm: mutable.LinkedHashMap[K @unchecked, V @unchecked] =>
+      val iter = lhm.entryIterator
+      var current = rootNode
+      while (iter.hasNext) {
+        val next = iter.next()
+        val originalHash = lhm.unimproveHash(next.hash)
+        val improved = improve(originalHash)
+        current = current.updated(next.key, next.value, originalHash, improved, 0, replaceValue = true)
+
+        if (current ne rootNode) {
+          var shallowlyMutableNodeMap = Node.bitposFrom(Node.maskFrom(improved, 0))
+
+          while (iter.hasNext) {
+            val next = iter.next()
+            val originalHash = lhm.unimproveHash(next.hash)
             shallowlyMutableNodeMap = current.updateWithShallowMutations(next.key, next.value, originalHash, improve(originalHash), 0, shallowlyMutableNodeMap)
           }
           return new HashMap(current)
@@ -250,7 +271,7 @@ final class HashMap[K, +V] private[immutable] (private[immutable] val rootNode: 
   override def foreachEntry[U](f: (K, V) => U): Unit = rootNode.foreachEntry(f)
 
   /** Applies a function to each key, value, and **original** hash value in this Map */
-  @`inline` private[collection] def foreachWithHash(f: (K, V, Int) => Unit): Unit = rootNode.foreachWithHash(f)
+  @inline private[collection] def foreachWithHash(f: (K, V, Int) => Unit): Unit = rootNode.foreachWithHash(f)
 
   override def equals(that: Any): Boolean =
     that match {
@@ -285,7 +306,7 @@ final class HashMap[K, +V] private[immutable] (private[immutable] val rootNode: 
     * }}}
     *
     * @param that the HashMap to merge this HashMap with
-    * @param mergef the merge function which resolves collisions between the two HashMaps. If `mergef` is null, then
+    * @param mergef the merge function which resolves collisions between the two HashMaps. If `mergef` is `null`, then
     *               keys from `this` will overwrite keys from `that`, making the behaviour equivalent to
     *               `that.concat(this)`
     *
@@ -332,9 +353,9 @@ final class HashMap[K, +V] private[immutable] (private[immutable] val rootNode: 
         } else {
           new HashMap(that.rootNode.updated(k, v, originalHash, improved, 0, replaceValue = true))
         }
-      } else if (that.size == 0) {
-        val thatPayload@(k, v) = rootNode.getPayload(0)
-        val thatOriginalHash = rootNode.getHash(0)
+      } else if (that.size == 1) {
+        val thatPayload@(k, v) = that.rootNode.getPayload(0)
+        val thatOriginalHash = that.rootNode.getHash(0)
         val thatImproved = improve(thatOriginalHash)
 
         if (rootNode.containsKey(k, thatOriginalHash, thatImproved, 0)) {
@@ -342,7 +363,7 @@ final class HashMap[K, +V] private[immutable] (private[immutable] val rootNode: 
           val (mergedK, mergedV) = mergef(payload, thatPayload)
           val mergedOriginalHash = mergedK.##
           val mergedImprovedHash = improve(mergedOriginalHash)
-          new HashMap(rootNode.updated(mergedK, mergedV, mergedOriginalHash, mergedImprovedHash, 0, replaceValue = true))
+          new HashMap(rootNode.removed(payload._1, thatOriginalHash, thatImproved, 0).updated(mergedK, mergedV, mergedOriginalHash, mergedImprovedHash, 0, replaceValue = true))
         } else {
           new HashMap(rootNode.updated(k, v, thatOriginalHash, thatImproved, 0, replaceValue = true))
         }
@@ -389,6 +410,24 @@ final class HashMap[K, +V] private[immutable] (private[immutable] val rootNode: 
             while (iter.hasNext) {
               val next = iter.next()
               val originalHash = hashSet.unimproveHash(next.hash)
+              val improved = improve(originalHash)
+              curr = curr.removed(next.key, originalHash, improved, 0)
+              if (curr.size == 0) {
+                return HashMap.empty
+              }
+            }
+            newHashMapOrThis(curr)
+          }
+        case lhashSet: collection.mutable.LinkedHashSet[K] =>
+          if (lhashSet.isEmpty) {
+            this
+          } else {
+            val iter = lhashSet.entryIterator
+            var curr = rootNode
+
+            while (iter.hasNext) {
+              val next = iter.next()
+              val originalHash = lhashSet.unimproveHash(next.hash)
               val improved = improve(originalHash)
               curr = curr.removed(next.key, originalHash, improved, 0)
               if (curr.size == 0) {
@@ -517,9 +556,9 @@ private[immutable] sealed abstract class MapNode[K, +V] extends Node[MapNode[K, 
     * @param originalHash the original hash of `key`
     * @param hash the improved hash of `key`
     * @param shift the shift of the node (distanceFromRoot * BitPartitionSize)
-    * @param replaceValue if true, then the value currently associated to `key` will be replaced with the passed value
+    * @param replaceValue if `true`, then the value currently associated to `key` will be replaced with the passed value
     *                     argument.
-    *                     if false, then the key will be inserted if not already present, however if the key is present
+    *                     if `false`, then the key will be inserted if not already present, however if the key is present
     *                     then the passed value will not replace the current value. That is, if `false`, then this
     *                     method has `update if not exists` semantics.
     */
@@ -659,12 +698,12 @@ private final class BitmapIndexedMapNode[K, +V](
     if ((dataMap & bitpos) != 0) {
       val index = indexFrom(dataMap, mask, bitpos)
       val payload = getPayload(index)
-      if (key == payload._1) payload else throw new NoSuchElementException
+      if (key == payload._1) payload else Iterator.empty.next()
     } else if ((nodeMap & bitpos) != 0) {
       val index = indexFrom(nodeMap, mask, bitpos)
       getNode(index).getTuple(key, originalHash, hash, shift + BitPartitionSize)
     } else {
-      throw new NoSuchElementException
+      Iterator.empty.next()
     }
   }
 
@@ -748,7 +787,7 @@ private final class BitmapIndexedMapNode[K, +V](
     * @param shallowlyMutableNodeMap bitmap of child nodes of this node, which can be shallowly mutated
     *                                during the call to this method
     *
-    * @return Int which is the bitwise OR of shallowlyMutableNodeMap and any freshly created nodes, which will be
+    * @return `Int` which is the bitwise OR of `shallowlyMutableNodeMap` and any freshly created nodes, which will be
     *         available for mutations in subsequent calls.
     */
   def updateWithShallowMutations[V1 >: V](key: K, value: V1, originalHash: Int, keyHash: Int, shift: Int, shallowlyMutableNodeMap: Int): Int = {
@@ -761,7 +800,7 @@ private final class BitmapIndexedMapNode[K, +V](
       val key0UnimprovedHash = getHash(index)
       if (key0UnimprovedHash == originalHash && key0 == key) {
         val value0 = this.getValue(index)
-        if (!((key0.asInstanceOf[AnyRef] eq key.asInstanceOf[AnyRef]) && (value0.asInstanceOf[AnyRef] eq value.asInstanceOf[AnyRef]))) {
+        if ((key0.asInstanceOf[AnyRef] ne key.asInstanceOf[AnyRef]) || (value0.asInstanceOf[AnyRef] ne value.asInstanceOf[AnyRef])) {
           val dataIx = dataIndex(bitpos)
           val idx = TupleLength * dataIx
           content(idx + 1) = value
@@ -832,7 +871,7 @@ private final class BitmapIndexedMapNode[K, +V](
       if (key0 == key) {
         if (this.payloadArity == 2 && this.nodeArity == 0) {
           /*
-           * Create new node with remaining pair. The new node will a) either become the new root
+           * Creates new node with remaining pair. The new node will a) either become the new root
            * returned, or b) unwrapped and inlined during returning.
            */
           val newDataMap = if (shift == 0) (dataMap ^ bitpos) else bitposFrom(maskFrom(keyHash, 0))
@@ -1271,7 +1310,7 @@ private final class BitmapIndexedMapNode[K, +V](
         }
       }
     case _: HashCollisionMapNode[_, _] =>
-      throw new Exception("Cannot merge BitmapIndexedMapNode with HashCollisionMapNode")
+      throw new RuntimeException("Cannot merge BitmapIndexedMapNode with HashCollisionMapNode")
   }
 
   override def equals(that: Any): Boolean =
@@ -1287,7 +1326,7 @@ private final class BitmapIndexedMapNode[K, +V](
       case _ => false
     }
 
-  @`inline` private def deepContentEquality(a1: Array[Any], a2: Array[Any], length: Int): Boolean = {
+  @inline private def deepContentEquality(a1: Array[Any], a2: Array[Any], length: Int): Boolean = {
     if (a1 eq a2)
       true
     else {
@@ -1305,6 +1344,8 @@ private final class BitmapIndexedMapNode[K, +V](
 
   override def hashCode(): Int =
     throw new UnsupportedOperationException("Trie nodes do not support hashing.")
+
+  override def toString = s"${getClass.getName}@${Integer.toHexString(System.identityHashCode(this))}"
 
   override def concat[V1 >: V](that: MapNode[K, V1], shift: Int): BitmapIndexedMapNode[K, V1] = that match {
     case bm: BitmapIndexedMapNode[K, V] @unchecked =>
@@ -1833,7 +1874,7 @@ private final class HashCollisionMapNode[K, +V ](
 
   def size: Int = content.length
 
-  def apply(key: K, originalHash: Int, hash: Int, shift: Int): V = get(key, originalHash, hash, shift).getOrElse(throw new NoSuchElementException)
+  def apply(key: K, originalHash: Int, hash: Int, shift: Int): V = get(key, originalHash, hash, shift).getOrElse(Iterator.empty.next())
 
   def get(key: K, originalHash: Int, hash: Int, shift: Int): Option[V] =
     if (this.hash == hash) {
@@ -1843,7 +1884,7 @@ private final class HashCollisionMapNode[K, +V ](
 
   override def getTuple(key: K, originalHash: Int, hash: Int, shift: Int): (K, V) = {
     val index = indexOf(key)
-    if (index >= 0) content(index) else throw new NoSuchElementException
+    if (index >= 0) content(index) else Iterator.empty.next()
   }
 
   def getOrElse[V1 >: V](key: K, originalHash: Int, hash: Int, shift: Int, f: => V1): V1 = {
@@ -2022,7 +2063,7 @@ private final class HashCollisionMapNode[K, +V ](
         i += 1
       }
     case _: BitmapIndexedMapNode[K, V1] =>
-      throw new Exception("Cannot merge HashCollisionMapNode with BitmapIndexedMapNode")
+      throw new RuntimeException("Cannot merge HashCollisionMapNode with BitmapIndexedMapNode")
 
   }
 
@@ -2051,16 +2092,17 @@ private final class HashCollisionMapNode[K, +V ](
   override def hashCode(): Int =
     throw new UnsupportedOperationException("Trie nodes do not support hashing.")
 
+  override def toString = s"${getClass.getName}@${Integer.toHexString(System.identityHashCode(this))}"
+
   override def cachedJavaKeySetHashCode: Int = size * hash
 
 }
 
 private final class MapKeyIterator[K, V](rootNode: MapNode[K, V])
-  extends ChampBaseIterator[MapNode[K, V]](rootNode) with Iterator[K] {
+  extends ChampBaseIterator[K, MapNode[K, V]](rootNode) {
 
   def next() = {
-    if (!hasNext)
-      throw new NoSuchElementException
+    if (!hasNext) Iterator.empty.next()
 
     val key = currentValueNode.getKey(currentValueCursor)
     currentValueCursor += 1
@@ -2071,11 +2113,10 @@ private final class MapKeyIterator[K, V](rootNode: MapNode[K, V])
 }
 
 private final class MapValueIterator[K, V](rootNode: MapNode[K, V])
-  extends ChampBaseIterator[MapNode[K, V]](rootNode) with Iterator[V] {
+  extends ChampBaseIterator[V, MapNode[K, V]](rootNode) {
 
   def next() = {
-    if (!hasNext)
-      throw new NoSuchElementException
+    if (!hasNext) Iterator.empty.next()
 
     val value = currentValueNode.getValue(currentValueCursor)
     currentValueCursor += 1
@@ -2085,11 +2126,10 @@ private final class MapValueIterator[K, V](rootNode: MapNode[K, V])
 }
 
 private final class MapKeyValueTupleIterator[K, V](rootNode: MapNode[K, V])
-  extends ChampBaseIterator[MapNode[K, V]](rootNode) with Iterator[(K, V)] {
+  extends ChampBaseIterator[(K, V), MapNode[K, V]](rootNode) {
 
   def next() = {
-    if (!hasNext)
-      throw new NoSuchElementException
+    if (!hasNext) Iterator.empty.next()
 
     val payload = currentValueNode.getPayload(currentValueCursor)
     currentValueCursor += 1
@@ -2100,11 +2140,10 @@ private final class MapKeyValueTupleIterator[K, V](rootNode: MapNode[K, V])
 }
 
 private final class MapKeyValueTupleReverseIterator[K, V](rootNode: MapNode[K, V])
-  extends ChampBaseReverseIterator[MapNode[K, V]](rootNode) with Iterator[(K, V)] {
+  extends ChampBaseReverseIterator[(K, V), MapNode[K, V]](rootNode) {
 
   def next() = {
-    if (!hasNext)
-      throw new NoSuchElementException
+    if (!hasNext) Iterator.empty.next()
 
     val payload = currentValueNode.getPayload(currentValueCursor)
     currentValueCursor -= 1
@@ -2114,13 +2153,12 @@ private final class MapKeyValueTupleReverseIterator[K, V](rootNode: MapNode[K, V
 }
 
 private final class MapKeyValueTupleHashIterator[K, V](rootNode: MapNode[K, V])
-  extends ChampBaseReverseIterator[MapNode[K, V]](rootNode) with Iterator[Any] {
+  extends ChampBaseReverseIterator[Any, MapNode[K, V]](rootNode) {
   private[this] var hash = 0
   private[this] var value: V = _
   override def hashCode(): Int = MurmurHash3.tuple2Hash(hash, value.##, MurmurHash3.productSeed)
-  def next() = {
-    if (!hasNext)
-      throw new NoSuchElementException
+  def next(): MapKeyValueTupleHashIterator[K, V] = {
+    if (!hasNext) Iterator.empty.next()
 
     hash = currentValueNode.getHash(currentValueCursor)
     value = currentValueNode.getValue(currentValueCursor)
@@ -2130,7 +2168,7 @@ private final class MapKeyValueTupleHashIterator[K, V](rootNode: MapNode[K, V])
 }
 
 /** Used in HashMap[K, V]#removeAll(HashSet[K]) */
-private final class MapNodeRemoveAllSetNodeIterator[K](rootSetNode: SetNode[K]) extends ChampBaseIterator(rootSetNode) {
+private final class MapNodeRemoveAllSetNodeIterator[K](rootSetNode: SetNode[K]) extends ChampBaseIterator[K, SetNode[K]](rootSetNode) {
   /** Returns the result of immutably removing all keys in `rootSetNode` from `rootMapNode` */
   def removeAll[V](rootMapNode: BitmapIndexedMapNode[K, V]): BitmapIndexedMapNode[K, V] = {
     var curr = rootMapNode
@@ -2146,6 +2184,8 @@ private final class MapNodeRemoveAllSetNodeIterator[K](rootSetNode: SetNode[K]) 
     }
     curr
   }
+
+  override def next(): K = Iterator.empty.next()
 }
 
 /**
@@ -2169,7 +2209,7 @@ object HashMap extends MapFactory[HashMap] {
       case _ => (newBuilder[K, V] ++= source).result()
     }
 
-  /** Create a new Builder which can be reused after calling `result()` without an
+  /** Creates a new Builder which can be reused after calling `result()` without an
     * intermediate call to `clear()` in order to build multiple related results.
     */
   def newBuilder[K, V]: ReusableBuilder[(K, V), HashMap[K, V]] = new HashMapBuilder[K, V]
@@ -2192,7 +2232,7 @@ private[immutable] final class HashMapBuilder[K, V] extends ReusableBuilder[(K, 
 
   private def isAliased: Boolean = aliased != null
 
-  /** The root node of the partially build hashmap */
+  /** The root node of the partially built hashmap. */
   private var rootNode: BitmapIndexedMapNode[K, V] = newEmptyRootNode
 
   private[immutable] def getOrElse[V0 >: V](key: K, value: V0): V0 =
@@ -2331,7 +2371,7 @@ private[immutable] final class HashMapBuilder[K, V] extends ReusableBuilder[(K, 
     ensureUnaliased()
     xs match {
       case hm: HashMap[K, V] =>
-        new ChampBaseIterator[MapNode[K, V]](hm.rootNode) {
+        new ChampBaseIterator[(K, V), MapNode[K, V]](hm.rootNode) {
           while(hasNext) {
             val originalHash = currentValueNode.getHash(currentValueCursor)
             update(
@@ -2344,12 +2384,22 @@ private[immutable] final class HashMapBuilder[K, V] extends ReusableBuilder[(K, 
             )
             currentValueCursor += 1
           }
+
+          override def next() = Iterator.empty.next()
         }
       case hm: collection.mutable.HashMap[K, V] =>
         val iter = hm.nodeIterator
         while (iter.hasNext) {
           val next = iter.next()
           val originalHash = hm.unimproveHash(next.hash)
+          val hash = improve(originalHash)
+          update(rootNode, next.key, next.value, originalHash, hash, 0)
+        }
+      case lhm: collection.mutable.LinkedHashMap[K, V] =>
+        val iter = lhm.entryIterator
+        while (iter.hasNext) {
+          val next = iter.next()
+          val originalHash = lhm.unimproveHash(next.hash)
           val hash = improve(originalHash)
           update(rootNode, next.key, next.value, originalHash, hash, 0)
         }

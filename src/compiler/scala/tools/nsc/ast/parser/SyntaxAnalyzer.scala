@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -38,12 +38,12 @@ abstract class SyntaxAnalyzer extends SubComponent with Parsers with MarkupParse
          md.mods.isSynthetic
       || md.mods.isParamAccessor
       || nme.isConstructorName(md.name)
-      || (md.name containsName nme.ANON_CLASS_NAME)
+      || md.name.containsName(nme.ANON_CLASS_NAME)
     )
 
     override def traverse(t: Tree): Unit = t match {
       case md: MemberDef if prune(md) =>
-      case md @ PackageDef(_, stats)  => traverseTrees(stats)
+      case PackageDef(_, stats)       => traverseTrees(stats)
       case md: ImplDef                => onMember(md) ; lower(traverseTrees(md.impl.body))
       case md: ValOrDefDef            => onMember(md) ; lower(traverse(md.rhs))
       case _                          => super.traverse(t)
@@ -106,7 +106,7 @@ abstract class SyntaxAnalyzer extends SubComponent with Parsers with MarkupParse
         unit.body = initialUnitBody(unit)
 
       if (settings.Ymemberpos.isSetByUser)
-        new MemberPosReporter(unit) show (style = settings.Ymemberpos.value)
+        new MemberPosReporter(unit).show(style = settings.Ymemberpos.value)
     }
   }
 }

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -16,8 +16,8 @@ package internal
 
 import scala.annotation.tailrec
 
-trait InfoTransformers {
-  self: SymbolTable =>
+final class InfoTransformers[U <: SymbolTable with Singleton](val self: U) {
+  import self._
 
   /* Syncnote: This should not need to be protected, as reflection does not run in multiple phases.
    */
@@ -38,7 +38,7 @@ trait InfoTransformers {
       } else if (next.pid <= that.pid && next.pid != NoPhase.id) {
         next insert that
       } else {
-        log("Inserting info transformer %s following %s".format(phaseOf(that.pid), phaseOf(this.pid)))
+        log(s"Inserting info transformer ${phaseOf(that.pid)} following ${phaseOf(this.pid)}")
         that.next = next
         that.prev = this
         next.prev = that

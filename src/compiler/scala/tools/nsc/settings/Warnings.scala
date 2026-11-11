@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -27,7 +27,7 @@ trait Warnings {
   // Warning semantics.
   val fatalWarnings = BooleanSetting("-Werror", "Fail the compilation if there are any warnings.") withAbbreviation "-Xfatal-warnings"
 
-  private val WconfDefault = List("cat=deprecation:ws", "cat=feature:ws", "cat=optimizer:ws")
+  val WconfDefault = List("cat=deprecation:ws", "cat=feature:ws", "cat=optimizer:ws")
   // Note: user-defined settings are added on the right, but the value is reversed before
   // it's parsed, so that later defined settings take precedence.
   val Wconf = MultiStringSetting(
@@ -40,8 +40,8 @@ trait Warnings {
          |Syntax: -Wconf:<filters>:<action>,<filters>:<action>,...
          |multiple <filters> are combined with &, i.e., <filter>&...&<filter>
          |
-         |Note: Run with `-Wconf:any:warning-verbose` to print warnings with their category, site,
-         |and (for deprecations) origin and since-version.
+         |Use the `@nowarn("verbose")` / `@nowarn("v")` annotation or `-Wconf:any:warning-verbose`
+         |to print applicable message filters with every warning.
          |
          |<filter>
          |  - Any message: any
@@ -73,7 +73,7 @@ trait Warnings {
          |  - error / e
          |  - warning / w
          |  - warning-summary / ws (summary with the number of warnings, like for deprecations)
-         |  - warning-verbose / wv (show warning category and site)
+         |  - warning-verbose / wv (show applicable filters with each warning)
          |  - info / i             (infos are not counted as warnings and don't affect `-Werror`)
          |  - info-summary / is
          |  - info-verbose / iv
@@ -82,8 +82,13 @@ trait Warnings {
          |The default configuration is:
          |  -Wconf:${WconfDefault.mkString(",")}
          |
-         |User-defined configurations are added to the left. The leftmost rule matching
-         |a warning message defines the action.
+         |Under -Xsource:3-cross, the category of scala3-migration warnings are errors by default:
+         |  -Wconf:cat=scala3-migration:e
+         |Under -Xsource:3-migration, they are warnings:
+         |  -Wconf:cat=scala3-migration:w
+         |
+         |User-defined configurations override previous settings, such that the last matching
+         |configuration defines the action for a given diagnostic message.
          |
          |Examples:
          |  - change every warning into an error: -Wconf:any:error
@@ -98,24 +103,48 @@ trait Warnings {
          |to prevent the shell from expanding patterns.""".stripMargin),
     prepend = true)
 
-  // Non-lint warnings. -- TODO turn into MultiChoiceEnumeration
+  // Non-lint warnings.
   val warnMacros           = ChoiceSetting(
     name    = "-Wmacros",
     helpArg = "mode",
     descr   = "Enable lint warnings on macro expansions.",
-    choices = List("none", "before", "after", "both"),
-    default = "before",
+    choices = List("none", "before", "after", "both", "default"),
+    default = "default",
     choicesHelp = List(
       "Do not inspect expansions or their original trees when generating unused symbol warnings.",
       "Only inspect unexpanded user-written code for unused symbols.",
       "Only inspect expanded trees when generating unused symbol warnings.",
-      "Inspect both user-written code and expanded trees when generating unused symbol warnings."
+      "Inspect both user-written code and expanded trees when generating unused symbol warnings.",
+      "Only inspect unexpanded user-written code for unused symbols but include usages in expansions.",
     )
   ) withAbbreviation "-Ywarn-macros"
   val warnDeadCode         = BooleanSetting("-Wdead-code", "Warn when dead code is identified.") withAbbreviation "-Ywarn-dead-code"
+  val warnNonUnitIf        = BooleanSetting("-Wnonunit-if", "Warn when if statements are non-Unit expressions, enabled by -Wnonunit-statement.")
+  import scala.language.existentials
+  val warnNonUnitStatement = BooleanSetting("-Wnonunit-statement", "Warn when block statements are non-Unit expressions.")
+    .enablingIfNotSetByUser(warnNonUnitIf :: Nil)
   val warnValueDiscard     = BooleanSetting("-Wvalue-discard", "Warn when non-Unit expression results are unused.") withAbbreviation "-Ywarn-value-discard"
   val warnNumericWiden     = BooleanSetting("-Wnumeric-widen", "Warn when numerics are widened.") withAbbreviation "-Ywarn-numeric-widen"
   val warnOctalLiteral     = BooleanSetting("-Woctal-literal", "Warn on obsolete octal syntax.") withAbbreviation "-Ywarn-octal-literal"
+  val warnUnnamedBoolean   = BooleanSetting("-Wunnamed-boolean-literal", "Warn about unnamed boolean literals if there is more than one or defaults are used, unless parameter has @deprecatedName.")
+  val warnUnnamedStrict    = BooleanSetting("-Wunnamed-boolean-literal-strict", "Warn about all unnamed boolean literals, unless parameter has @deprecatedName or the method has a single leading boolean parameter.").enabling(warnUnnamedBoolean :: Nil)
+  val warnToString         = BooleanSetting("-Wtostring-interpolated", "Warn when a standard interpolator uses toString.")
+  val warnMultiargInfix    = BooleanSetting("-Wmultiarg-infix", "Infix operator was defined or used with multiarg operand.")
+  def multiargInfix        = warnMultiargInfix.value
+
+  object PerformanceWarnings extends MultiChoiceEnumeration {
+    val Captured       = Choice("captured",        "Modification of var in closure causes boxing.")
+    val NonlocalReturn = Choice("nonlocal-return", "A return statement used an exception for flow control.")
+  }
+  val warnPerformance = MultiChoiceSetting(
+    name    = "-Wperformance",
+    helpArg = "warning",
+    descr   = "Enable or disable specific lints for performance",
+    domain  = PerformanceWarnings,
+    default = Some(List("_"))
+  )
+  def warnCaptured       = warnPerformance.contains(PerformanceWarnings.Captured)
+  def warnNonlocalReturn = warnPerformance.contains(PerformanceWarnings.NonlocalReturn)
 
   object UnusedWarnings extends MultiChoiceEnumeration {
     val Imports   = Choice("imports",   "Warn if an import selector is not referenced.")
@@ -169,6 +198,7 @@ trait Warnings {
     val AdaptedArgs            = LintWarning("adapted-args",              "An argument list was modified to match the receiver.")
     val NullaryUnit            = LintWarning("nullary-unit",              "`def f: Unit` looks like an accessor; add parens to look side-effecting.")
     val Inaccessible           = LintWarning("inaccessible",              "Warn about inaccessible types in method signatures.")
+    val InferStructural        = LintWarning("infer-structural",          "Warn on definitions with an inferred structural type.")
     val InferAny               = LintWarning("infer-any",                 "A type argument was inferred as Any.")
     val MissingInterpolator    = LintWarning("missing-interpolator",      "A string literal appears to be missing an interpolator id.")
     val DocDetached            = LintWarning("doc-detached",              "When running scaladoc, warn if a doc comment is discarded.")
@@ -187,13 +217,19 @@ trait Warnings {
     val Serial                 = LintWarning("serial",                    "@SerialVersionUID on traits and non-serializable classes.")
     val ValPattern             = LintWarning("valpattern",                "Enable pattern checks in val definitions.")
     val EtaZero                = LintWarning("eta-zero",                  "Usage `f` of parameterless `def f()` resulted in eta-expansion, not empty application `f()`.")
-    val EtaSam                 = LintWarning("eta-sam",                   "The Java-defined target interface for eta-expansion was not annotated @FunctionalInterface.")
+    val EtaSam                 = LintWarning("eta-sam",                   "A method reference was eta-expanded but the expected SAM type was not annotated @FunctionalInterface.")
     val Deprecation            = LintWarning("deprecation",               "Enable -deprecation and also check @deprecated annotations.")
     val ByNameImplicit         = LintWarning("byname-implicit",           "Block adapted by implicit with by-name parameter.")
     val RecurseWithDefault     = LintWarning("recurse-with-default",      "Recursive call used default argument.")
     val UnitSpecialization     = LintWarning("unit-special",              "Warn for specialization of Unit in parameter position.")
-    val MultiargInfix          = LintWarning("multiarg-infix",            "Infix operator was defined or used with multiarg operand.")
     val ImplicitRecursion      = LintWarning("implicit-recursion",        "Implicit resolves to an enclosing definition.")
+    val UniversalMethods       = LintWarning("universal-methods",         "Dubious usage of member of `Any` or `AnyRef`.")
+    val NumericMethods         = LintWarning("numeric-methods",           "Dubious usages, such as `42.isNaN`.")
+    val ArgDiscard             = LintWarning("arg-discard",               "-Wvalue-discard for adapted arguments.")
+    val IntDivToFloat          = LintWarning("int-div-to-float",          "Warn when an integer division is converted (widened) to floating point: `(someInt / 2): Double`.")
+    val PatternShadow          = LintWarning("pattern-shadow",            "Pattern variable id is also a term in scope.")
+    val CloneableObject        = LintWarning("cloneable",                 "Modules (objects) should not be Cloneable.")
+    val DubiousOverload        = LintWarning("overload",                  "Overload differs only in an implicit parameter.")
 
     def allLintWarnings = values.toSeq.asInstanceOf[Seq[LintWarning]]
   }
@@ -202,6 +238,7 @@ trait Warnings {
   def warnAdaptedArgs            = lint contains AdaptedArgs
   def warnNullaryUnit            = lint contains NullaryUnit
   def warnInaccessible           = lint contains Inaccessible
+  def warnInferStructural        = lint contains InferStructural
   def warnInferAny               = lint contains InferAny
   def warnMissingInterpolator    = lint contains MissingInterpolator
   def warnDocDetached            = lint contains DocDetached
@@ -215,7 +252,6 @@ trait Warnings {
   def warnStarsAlign             = lint contains StarsAlign
   def warnConstant               = lint contains Constant
   def lintUnused                 = lint contains Unused
-  def warnNonlocalReturn         = lint contains NonlocalReturn
   def lintImplicitNotFound       = lint contains ImplicitNotFound
   def warnSerialization          = lint contains Serial
   def lintValPatterns            = lint contains ValPattern
@@ -225,8 +261,14 @@ trait Warnings {
   def warnByNameImplicit         = lint contains ByNameImplicit
   def warnRecurseWithDefault     = lint contains RecurseWithDefault
   def unitSpecialization         = lint contains UnitSpecialization
-  def multiargInfix              = lint contains MultiargInfix
-  def lintImplicitRecursion      = lint.contains(ImplicitRecursion) || (warnSelfImplicit: @nowarn("cat=deprecation"))
+  def lintImplicitRecursion      = lint.contains(ImplicitRecursion) || (warnSelfImplicit.value: @nowarn("cat=deprecation"))
+  def lintUniversalMethods       = lint.contains(UniversalMethods)
+  def lintNumericMethods         = lint.contains(NumericMethods)
+  def lintArgDiscard             = lint.contains(ArgDiscard)
+  def lintIntDivToFloat          = lint.contains(IntDivToFloat)
+  def warnPatternShadow          = lint.contains(PatternShadow)
+  def warnCloneableObject        = lint.contains(CloneableObject)
+  def warnDubiousOverload        = lint.contains(DubiousOverload)
 
   // The Xlint warning group.
   val lint = MultiChoiceSetting(
@@ -239,6 +281,8 @@ trait Warnings {
     if (s contains Unused) warnUnused.enable(UnusedWarnings.Linted)
     else warnUnused.disable(UnusedWarnings.Linted)
     if (s.contains(Deprecation) && deprecation.isDefault) deprecation.value = true
+    if (s.contains(NonlocalReturn)) warnPerformance.enable(PerformanceWarnings.NonlocalReturn)
+    else warnPerformance.disable(PerformanceWarnings.NonlocalReturn)
   }
 
   // Backward compatibility.

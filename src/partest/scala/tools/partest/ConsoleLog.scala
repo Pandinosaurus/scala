@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -67,6 +67,7 @@ class ConsoleLog(colorEnabled: Boolean) {
   def printDot(): Unit = printProgress(".")
   def printS(): Unit = printProgress(_warning + "s" +_default)
   def printEx(): Unit  = printProgress(_failure + "X" + _default)
+  def printUnknown(): Unit  = printProgress(_failure + "?" + _default)  // crash or uninit'd
   private def printProgress(icon: String): Unit = synchronized {
     if (dotCount >= DotWidth) {
       outline("\n" + icon)

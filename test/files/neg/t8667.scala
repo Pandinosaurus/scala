@@ -82,3 +82,34 @@ object app {
     x f0
   }
 }
+
+trait Nuance {
+  def f2(i: Int, j: Int) = ()
+  def `always report bad named arg`: Unit = {
+    f2(k = 42)
+    f2(17, k = 42)
+    f2(17, 27, k = 42)
+  }
+}
+
+trait FurtherFailures {
+  def almostTupleAdapted(t2: (Int, String)): Unit = ()
+
+  def close() = almostTupleAdapted(math.floor("not a num 1"), math.floor("not a num 2"))
+
+  def missingArgs(d: Double, s: String): Unit = ()
+
+  def missed() = missingArgs(math.floor("not a num"))
+
+  def tooManyArgs(s: String, i: Int): Unit = ()
+
+  def miscount() = tooManyArgs(math.floor("not a num"))
+
+  def nonesuch(): Unit = doesntExist(math.floor("not a num 1"), math.floor("not a num 2"))
+
+  def nonesuchical: Unit = doesntExist(i = math.floor("not a num 1"), j = math.floor("not a num 2"))
+
+  def badApplied: Unit = List(42).munge(x = 27)
+
+  def badApply: Unit = List(42).munge { x = 27 }
+}

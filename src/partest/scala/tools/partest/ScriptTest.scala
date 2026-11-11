@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -24,7 +24,7 @@ abstract class ScriptTest extends DirectTest {
   def code = scriptPath.toFile.slurp()
   def argv = Seq.empty[String]
   def show() = {
-    compile()
+    assert(compile())
     ScalaClassLoader(getClass.getClassLoader).run(testmain, argv)
   }
 }

@@ -190,7 +190,7 @@ class SetMapRulesTest {
     checkPreservesIdentities(gen, "add") { c => c.add(Value(1,2)); c }
     checkPreservesIdentities(gen, "addOne")(_.addOne(Value(1,2)))
     checkPreservesIdentities(gen, "addAll")(_.addAll(Seq(Value(1,2))))
-    checkPreservesIdentities(gen, "update") { c => c.update(Value(1,2), true); c }
+    checkPreservesIdentities(gen, "update") { c => c.update(Value(1,2), included = true); c }
   }
 
   private def checkImmutableSet(gen: () => immutable.Set[Value]): Unit = {
@@ -237,6 +237,7 @@ class SetMapRulesTest {
   @Test def testMutableOpenHashMap(): Unit =
     mapdata.foreach(d => checkMutableMap(() => mutable.OpenHashMap.from(d)))
 
+  @annotation.nowarn("cat=deprecation&origin=scala.collection.mutable.AnyRefMap")
   @Test def testMutableAnyRefMap(): Unit =
     mapdata.foreach(d => checkMutableMap(() => mutable.AnyRefMap.from(d)))
 

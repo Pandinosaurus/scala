@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -23,7 +23,7 @@ import java.util.Objects.requireNonNull
 import java.io.{IOException, NotSerializableException, ObjectInputStream, ObjectOutputStream}
 
 /**
-  * Latch used to implement waiting on a DefaultPromise's result.
+  * Latch used to implement waiting on a `DefaultPromise`'s result.
   *
   * Inspired by: http://gee.cs.oswego.edu/cgi-bin/viewcvs.cgi/jsr166/src/main/java/util/concurrent/locks/AbstractQueuedSynchronizer.java
   * Written by Doug Lea with assistance from members of JCP JSR-166
@@ -47,20 +47,20 @@ private[impl] final class CompletionLatch[T] extends AbstractQueuedSynchronizer 
 
 private[concurrent] object Promise {
   /**
-   * Link represents a completion dependency between 2 DefaultPromises.
-   * As the DefaultPromise referred to by a Link can itself be linked to another promise
+   * `Link` represents a completion dependency between 2 `DefaultPromise`s.
+   * As the `DefaultPromise` referred to by a `Link` can itself be linked to another promise
    * `relink` traverses such chains and compresses them so that the link always points
    * to the root of the dependency chain.
    *
-   * In order to conserve memory, the owner of a Link (a DefaultPromise) is not stored
-   * on the Link, but is instead passed in as a parameter to the operation(s).
+   * In order to conserve memory, the owner of a `Link` (a `DefaultPromise`) is not stored
+   * on the `Link`, but is instead passed in as a parameter to the operation(s).
    *
-   * If when compressing a chain of Links it is discovered that the root has been completed,
-   * the `owner`'s value is completed with that value, and the Link chain is discarded.
+   * If when compressing a chain of `Link`s it is discovered that the root has been completed,
+   * the `owner`'s value is completed with that value, and the `Link` chain is discarded.
    **/
   private[concurrent] final class Link[T](to: DefaultPromise[T]) extends AtomicReference[DefaultPromise[T]](to) {
     /**
-     * Compresses this chain and returns the currently known root of this chain of Links.
+     * Compresses this chain and returns the currently known root of this chain of `Link`s.
      **/
     final def promise(owner: DefaultPromise[T]): DefaultPromise[T] = {
       val c = get()
@@ -68,7 +68,7 @@ private[concurrent] object Promise {
     }
 
     /**
-     * The combination of traversing and possibly unlinking of a given `target` DefaultPromise.
+     * The combination of traversing and possibly unlinking of a given `target` `DefaultPromise`.
      **/
     @inline @tailrec private[this] final def compressed(current: DefaultPromise[T], target: DefaultPromise[T], owner: DefaultPromise[T]): DefaultPromise[T] = {
       val value = target.get()
@@ -84,8 +84,8 @@ private[concurrent] object Promise {
   }
 
   /**
-   * The process of "resolving" a Try is to validate that it only contains
-   * those values which makes sense in the context of Futures.
+   * The process of "resolving" a `Try` is to validate that it only contains
+   * those values which makes sense in the context of `Future`s.
    **/
   // requireNonNull is paramount to guard against null completions
   private[this] final def resolve[T](value: Try[T]): Try[T] =
@@ -215,6 +215,16 @@ private[concurrent] object Promise {
     override final def onComplete[U](func: Try[T] => U)(implicit executor: ExecutionContext): Unit =
       dispatchOrAddCallbacks(get(), new Transformation[T, Unit](Xform_onComplete, func, executor))
 
+    /** The same as [[onComplete]], but additionally returns a function which can be
+     *  invoked to unregister the callback function. Removing a callback from a long-lived
+     *  future can enable garbage collection of objects referenced by the closure.
+     */
+    private[concurrent] final def onCompleteWithUnregister[U](func: Try[T] => U)(implicit executor: ExecutionContext): () => Unit = {
+      val t = new Transformation[T, Unit](Xform_onComplete, func, executor)
+      dispatchOrAddCallbacks(get(), t)
+      () => unregisterCallback(t)
+    }
+
     override final def failed: Future[Throwable] =
       if (!get().isInstanceOf[Success[_]]) super.failed
       else Future.failedFailureFuture // Cached instance in case of already known success
@@ -235,19 +245,21 @@ private[concurrent] object Promise {
             if (atMost <= Duration.Zero) null
             else {
               val l = new CompletionLatch[T]()
-              onComplete(l)(ExecutionContext.parasitic)
-
-              if (atMost.isFinite)
-                l.tryAcquireSharedNanos(1, atMost.toNanos)
-              else
-                l.acquireSharedInterruptibly(1)
-
+              val t = new Transformation[T, Unit](Xform_onComplete, l, ExecutionContext.parasitic)
+              dispatchOrAddCallbacks(get(), t)
+              try
+                if (atMost.isFinite)
+                  l.tryAcquireSharedNanos(1, atMost.toNanos)
+                else
+                  l.acquireSharedInterruptibly(1)
+              finally
+                if (l.result eq null) unregisterCallback(t)
               l.result
             }
           if (r ne null) r
-          else throw new TimeoutException("Future timed out after [" + atMost + "]")
+          else Future.timeoutError(atMost)
         }
-      } else throw new IllegalArgumentException("Cannot wait for Undefined duration of time")
+      } else Future.waitUndefinedError()
 
     @throws(classOf[TimeoutException])
     @throws(classOf[InterruptedException])
@@ -319,6 +331,19 @@ private[concurrent] object Promise {
         p.dispatchOrAddCallbacks(p.get(), callbacks)
       }
 
+    @tailrec private def unregisterCallback(t: Transformation[_, _]): Unit = {
+      val state = get()
+      if (state eq t) {
+        if (!compareAndSet(state, Noop)) unregisterCallback(t)
+      } else if (state.isInstanceOf[ManyCallbacks[_]]) {
+        if (!compareAndSet(state, removeCallback(state.asInstanceOf[ManyCallbacks[T]], t))) unregisterCallback(t)
+      } else if (state.isInstanceOf[Link[_]]) {
+        // Misses `t` if `linkRootOf` is concurrently moving it to the root. It then stays there until the root completes,
+        // which is rare and bounded: a promise is linked only once.
+        state.asInstanceOf[Link[T]].promise(this).unregisterCallback(t)
+      }
+    }
+
     // IMPORTANT: Noop should never be passed in here, neither as left OR as right
     @tailrec private[this] final def concatCallbacks(left: Callbacks[T], right: Callbacks[T]): Callbacks[T] =
       if (left.isInstanceOf[Transformation[T,_]]) new ManyCallbacks[T](left.asInstanceOf[Transformation[T,_]], right)
@@ -326,6 +351,20 @@ private[concurrent] object Promise {
         val m = left.asInstanceOf[ManyCallbacks[T]]
         concatCallbacks(m.rest, new ManyCallbacks(m.first, right))
       }
+
+    @tailrec private[this] final def removeCallback(cs: Callbacks[T], t: Transformation[_, _], result: Callbacks[T] = null): AnyRef =
+      if (cs eq t) {
+        if (result == null) Noop
+        else result
+      }
+      else if (cs.isInstanceOf[ManyCallbacks[_]]) {
+        val m = cs.asInstanceOf[ManyCallbacks[T]]
+        if (m.first eq t) {
+          if (result == null) m.rest
+          else concatCallbacks(m.rest, result)
+        }
+        else removeCallback(m.rest, t, if (result == null) m.first else new ManyCallbacks(m.first, result))
+      } else cs
 
     // IMPORTANT: Noop should not be passed in here, `callbacks` cannot be null
     @tailrec
@@ -489,7 +528,7 @@ private[concurrent] object Promise {
               if (v.isInstanceOf[Failure[F]]) {
                 val f = fun.asInstanceOf[PartialFunction[Throwable, Future[T]]].applyOrElse(v.asInstanceOf[Failure[F]].exception, Future.recoverWithFailed)
                 if (f ne Future.recoverWithFailedMarker) {
-                  if (f.isInstanceOf[DefaultPromise[T]]) f.asInstanceOf[DefaultPromise[T]].linkRootOf(this, null) else completeWith(f.asInstanceOf[Future[T]])
+                  if (f.isInstanceOf[DefaultPromise[_]]) f.asInstanceOf[DefaultPromise[T]].linkRootOf(this, null) else completeWith(f.asInstanceOf[Future[T]])
                   null
                 } else v
               } else v

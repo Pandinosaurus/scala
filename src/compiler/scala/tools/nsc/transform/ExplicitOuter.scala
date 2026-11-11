@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -136,7 +136,8 @@ abstract class ExplicitOuter extends InfoTransform
    *    </li>
    *    <li>
    *      Add a protected \$outer field to an inner class which is
-   *      not a trait.
+   *      not a trait, unless it can reuse the outer field of its
+   *      superclass (see `hasOuterField`).
    *    </li>
    *    <li>
    *      <p>
@@ -150,13 +151,6 @@ abstract class ExplicitOuter extends InfoTransform
    *        mixin classes with outer accessor defs (unless the superclass
    *        already inherits the same mixin).
    *      </p>
-   *    </li>
-   *    <li>
-   *      Make all super accessors and modules in traits non-private, mangling
-   *      their names.
-   *    </li>
-   *    <li>
-   *      Remove protected flag from all members of traits.
    *    </li>
    *  </ol>
    *  Note: this transformInfo need not be reflected as the JVM reflection already
@@ -392,7 +386,7 @@ abstract class ExplicitOuter extends InfoTransform
         if (sym.isProtected && !sym.isJavaDefined) sym setFlag notPROTECTED
       }
       tree match {
-        case Template(parents, self, decls) =>
+        case Template(_, _, _) =>
           val newDefs = new ListBuffer[Tree]
           atOwner(tree, currentOwner) {
             if (!currentClass.isInterface) {
@@ -468,7 +462,7 @@ abstract class ExplicitOuter extends InfoTransform
         // for the pattern matcher
         // base.<outer>.eq(o) --> base.$outer().eq(o) if there's an accessor, else the whole tree becomes TRUE
         // TODO remove the synthetic `<outer>` method from outerFor??
-        case Apply(eqsel@Select(eqapp@Apply(sel@Select(base, nme.OUTER_SYNTH), Nil), eq), args) =>
+        case Apply(eqsel@Select(Apply(sel@Select(base, nme.OUTER_SYNTH), Nil), eq), args) =>
           val outerFor = sel.symbol.owner
           val acc = outerAccessor(outerFor)
 

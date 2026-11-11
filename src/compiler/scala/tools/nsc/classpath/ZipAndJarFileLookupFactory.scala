@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -18,6 +18,7 @@ import java.nio.file.Files
 import java.nio.file.attribute.{BasicFileAttributes, FileTime}
 import java.util.{Timer, TimerTask}
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicBoolean
 import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.reflect.io.{AbstractFile, FileZipArchive, ManifestResources}
@@ -73,7 +74,9 @@ object ZipAndJarClassPathFactory extends ZipAndJarFileLookupFactory {
     override private[nsc] def classes(inPackage: PackageName): Seq[ClassFileEntry] = files(inPackage)
 
     override protected def createFileEntry(file: FileZipArchive#Entry): ClassFileEntryImpl = ClassFileEntryImpl(file)
-    override protected def isRequiredFileType(file: AbstractFile): Boolean = file.isClass
+    override protected def isRequiredFileType(file: AbstractFile, siblingExists: String => Boolean): Boolean = {
+      file.isClass && !(file.hasExtension("class") && siblingExists(classNameToTasty(file.name)))
+    }
   }
 
   /**
@@ -119,7 +122,7 @@ object ZipAndJarClassPathFactory extends ZipAndJarFileLookupFactory {
             case pkgFile :: rest =>
               val subpackages = getSubpackages(pkgFile)
               val fullPkgName = packagePrefix + pkgFile.name
-              packages.put(fullPkgName, PackageFileInfo(pkgFile, subpackages))
+              packages.update(fullPkgName, PackageFileInfo(pkgFile, subpackages))
               val newPackagePrefix = fullPkgName + "."
               subpackagesQueue.enqueue(PackageInfo(newPackagePrefix, subpackages))
               loop(rest)
@@ -128,7 +131,7 @@ object ZipAndJarClassPathFactory extends ZipAndJarFileLookupFactory {
           loop(filesForPrefix)
         }
       val subpackages = getSubpackages(file)
-      packages.put(ClassPath.RootPackage, PackageFileInfo(file, subpackages))
+      packages.update(ClassPath.RootPackage, PackageFileInfo(file, subpackages))
       val infos = mutable.Queue(PackageInfo(ClassPath.RootPackage, subpackages))
       traverse(infos)
       packages
@@ -182,7 +185,7 @@ object ZipAndJarSourcePathFactory extends ZipAndJarFileLookupFactory {
     override private[nsc] def sources(inPackage: PackageName): Seq[SourceFileEntry] = files(inPackage)
 
     override protected def createFileEntry(file: FileZipArchive#Entry): SourceFileEntryImpl = SourceFileEntryImpl(file)
-    override protected def isRequiredFileType(file: AbstractFile): Boolean = file.isScalaOrJavaSource
+    override protected def isRequiredFileType(file: AbstractFile, siblingExists: String => Boolean): Boolean = file.isScalaOrJavaSource
   }
 
   override protected def createForZipFile(zipFile: AbstractFile, zipSettings: ZipSettings): ClassPath with Closeable = ZipArchiveSourcePath(zipFile.file)
@@ -196,12 +199,11 @@ final class FileBasedCache[K, T] {
   private case class Entry(k: K, stamps: Seq[Stamp], t: T) {
     val referenceCount: AtomicInteger = new AtomicInteger(1)
     var timerTask: TimerTask = null
-    def cancelTimer(): Unit = {
+    def cancelTimer(): Unit =
       timerTask match {
         case null =>
-        case t => t.cancel()
+        case task => task.cancel()
       }
-    }
   }
   private val cache = collection.mutable.Map.empty[(K, Seq[Path]), Entry]
 
@@ -211,10 +213,9 @@ final class FileBasedCache[K, T] {
     e.cancelTimer()
 
     new Closeable {
-      var closed = false
+      val closed = new AtomicBoolean(false)
       override def close(): Unit = {
-        if (!closed) {
-          closed = true
+        if (closed.compareAndSet(false, true)) {
           val count = e.referenceCount.decrementAndGet()
           if (count == 0) {
             e.t match {
@@ -225,7 +226,7 @@ final class FileBasedCache[K, T] {
                       override def run(): Unit = {
                         cache.synchronized {
                           if (e.referenceCount.compareAndSet(0, -1)) {
-                            cache.remove(key)
+                            cache.subtractOne(key)
                             cl.close()
                           }
                         }
@@ -251,7 +252,7 @@ final class FileBasedCache[K, T] {
     if (disableCache) Left("caching is disabled due to a policy setting")
     else if (!checkStamps) Right(paths)
     else {
-      val nonJarZips = urlsAndFiles.filter { case (url, file) => file == null || !Jar.isJarOrZip(file.file) }
+      val nonJarZips = urlsAndFiles.filter { case (_, file) => file == null || !Jar.isJarOrZip(file.file) }
       if (nonJarZips.nonEmpty) Left(s"caching is disabled because of the following classpath elements: ${nonJarZips.map(_._1).mkString(", ")}.")
       else Right(paths)
     }
@@ -266,7 +267,7 @@ final class FileBasedCache[K, T] {
       val fileKey = attrs.fileKey()
       Stamp(lastModified, attrs.size(), if (fileKey == null) NoFileKey else fileKey)
       } catch {
-        case ex: java.nio.file.NoSuchFileException =>
+        case _: java.nio.file.NoSuchFileException =>
           // Dummy stamp for (currently) non-existent file.
           Stamp(FileTime.fromMillis(0), -1, new Object)
       }
@@ -294,7 +295,7 @@ final class FileBasedCache[K, T] {
           }
           val value = create()
           val entry = Entry(k, stamps, value)
-          cache.put(key, entry)
+          cache.update(key, entry)
           closeableRegistry.registerCloseable(referenceCountDecrementer(entry, key))
           value
         }
@@ -302,7 +303,7 @@ final class FileBasedCache[K, T] {
         // Cache miss
         val value = create()
         val entry = Entry(k, stamps, value)
-        cache.put(key, entry)
+        cache.update(key, entry)
         closeableRegistry.registerCloseable(referenceCountDecrementer(entry, key))
         value
     }

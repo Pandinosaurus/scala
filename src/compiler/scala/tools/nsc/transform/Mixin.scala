@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -193,8 +193,15 @@ abstract class Mixin extends Transform with ast.TreeDSL with AccessorSynthesis {
       // !!! JZ Really? What about the effect of abstract types, prefix?
       if (mixinClass.typeParams.isEmpty) sym
       else {
-        sym modifyInfo (_ => forwarderInfo)
-        avoidTypeParamShadowing(mixinMember, sym)
+        // `forwarderInfo` was obtained by `memberInfo`, which may share the type parameter symbols of
+        // `mixinMember`. Clone them so that renaming them below doesn't mutate the original method.
+        // It is an existential if the method's type refers to `this.type`, e.g. `Iterable.lazyZip`.
+        def cloneTypeParams(tp: Type): Type = tp match {
+          case ExistentialType(quantified, underlying) => newExistentialType(quantified, cloneTypeParams(underlying))
+          case _                                       => tp.cloneInfo(sym)
+        }
+        sym modifyInfo (_ => cloneTypeParams(forwarderInfo))
+        avoidTypeParamShadowing(sym)
         sym
       }
     }
@@ -203,13 +210,8 @@ abstract class Mixin extends Transform with ast.TreeDSL with AccessorSynthesis {
 
   // scala/bug#11523 rename method type parameters that shadow enclosing class type parameters in the host class
   // of the mixin forwarder
-  private def avoidTypeParamShadowing(mixinMember: Symbol, forwarder: Symbol): Unit = {
-    def isForwarderTparam(sym: Symbol) = {
-      val owner = sym.owner
-      // TODO fix forwarder's info should not refer to tparams of mixinMember, fix cloning in caller!
-      //      try forwarderInfo.cloneInfo(sym)
-      owner == forwarder || owner == mixinMember
-    }
+  private def avoidTypeParamShadowing(forwarder: Symbol): Unit = {
+    def isForwarderTparam(sym: Symbol) = sym.owner == forwarder
 
     val symTparams: mutable.Map[Name, Symbol] = mutable.Map.from(forwarder.typeParams.iterator.map(t => (t.name, t)))
     forwarder.info.foreach {
@@ -357,6 +359,8 @@ abstract class Mixin extends Transform with ast.TreeDSL with AccessorSynthesis {
             case alias1 =>
               registerRequiredDirectInterface(alias1, clazz, parent =>
                 s"Unable to implement a super accessor required by trait ${mixinClass.name} unless $parent is directly extended by $clazz.")
+              if (alias1.isValue && !alias1.isMethod || alias1.isAccessor)
+                reporter.error(clazz.pos, s"parent $mixinClass has a super call to method ${mixinMember.alias.fullNameString}, which binds to the value ${alias1.fullNameString}. Super calls can only target methods.")
               superAccessor.asInstanceOf[TermSymbol] setAlias alias1
           }
         }
@@ -402,7 +406,7 @@ abstract class Mixin extends Transform with ast.TreeDSL with AccessorSynthesis {
     // first complete the superclass with mixed in members
     addMixedinMembers(clazz.superClass, unit)
 
-    for (mc <- clazz.mixinClasses ; if mc.isTrait) {
+    for (mc <- clazz.mixinClasses if mc.isTrait) {
       // @SEAN: adding trait tracking so we don't have to recompile transitive closures
       unit.registerDependency(mc)
       publicizeTraitMethods(mc)
@@ -418,14 +422,14 @@ abstract class Mixin extends Transform with ast.TreeDSL with AccessorSynthesis {
 
   class MixinTransformer(unit : CompilationUnit) extends AstTransformer with AccessorTreeSynthesis {
     /** The typer */
-    private var localTyper: erasure.Typer = _
+    private var localTyper: erasure.erasureAnalyzer.Typer = _
     protected def typedPos(pos: Position)(tree: Tree): Tree = localTyper.typedPos(pos)(tree)
 
     /** The rootContext used for typing */
     private val rootContext =
-      erasure.NoContext.make(EmptyTree, rootMirror.RootClass, newScope)
+      erasure.erasureAnalyzer.NoContext.make(EmptyTree, rootMirror.RootClass, newScope)
 
-    private val nullables = mutable.AnyRefMap[Symbol, Map[Symbol, List[Symbol]]]()
+    private val nullables = mutable.HashMap[Symbol, Map[Symbol, List[Symbol]]]()
 
     /** The first transform; called in a pre-order traversal at phase mixin
      *  (that is, every node is processed before its children).
@@ -437,7 +441,7 @@ abstract class Mixin extends Transform with ast.TreeDSL with AccessorSynthesis {
       val sym = tree.symbol
       tree match {
         case Template(parents, self, body) =>
-          localTyper = erasure.newTyper(rootContext.make(tree, currentOwner))
+          localTyper = erasure.erasureAnalyzer.newTyper(rootContext.make(tree, currentOwner))
           exitingMixin(currentOwner.owner.info)//todo: needed?
 
           if (!currentOwner.isTrait && !isPrimitiveValueClass(currentOwner))
@@ -614,7 +618,7 @@ abstract class Mixin extends Transform with ast.TreeDSL with AccessorSynthesis {
       val sym = tree.symbol
 
       tree match {
-        case templ @ Template(parents, self, body) =>
+        case Template(parents, self, body) =>
           // change parents of templates to conform to parents in the symbol info
           val parents1 = currentOwner.info.parents map (t => TypeTree(t) setPos tree.pos)
 

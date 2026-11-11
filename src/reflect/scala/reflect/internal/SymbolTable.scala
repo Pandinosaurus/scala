@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -30,37 +30,60 @@ abstract class SymbolTable extends macros.Universe
                               with Names
                               with Symbols
                               with Types
-                              with Variances
-                              with Kinds
-                              with ExistentialsAndSkolems
                               with FlagSets
                               with Scopes
                               with Mirrors
                               with Definitions
                               with Constants
                               with BaseTypeSeqs
-                              with InfoTransformers
                               with transform.Transforms
                               with StdNames
                               with AnnotationInfos
-                              with AnnotationCheckers
                               with Trees
                               with Printers
                               with Positions
-                              with TypeDebugging
                               with Importers
-                              with CapturedVariables
                               with StdAttachments
-                              with StdCreators
-                              with ReificationSupport
-                              with PrivateWithin
-                              with pickling.Translations
-                              with FreshNames
                               with Internals
                               with Reporting
 {
 
   val gen = new InternalTreeGen { val global: SymbolTable.this.type = SymbolTable.this }
+
+  val reificationSupport: ReificationSupport[SymbolTable.this.type] = new ReificationSupport[SymbolTable.this.type](this)
+  val build: reificationSupport.ReificationSupportImpl = reificationSupport.build
+
+  val typeDebugging: TypeDebugging[SymbolTable.this.type] = new TypeDebugging[SymbolTable.this.type](this)
+  final val noPrint: typeDebugging.noPrint.type = typeDebugging.noPrint
+  final val typeDebug: typeDebugging.typeDebug.type = typeDebugging.typeDebug
+
+  val capturedVariables: CapturedVariables[SymbolTable.this.type] = new CapturedVariables[SymbolTable.this.type](this)
+
+  val packageAccessBoundaries: PrivateWithin[SymbolTable.this.type] = new PrivateWithin[SymbolTable.this.type](this)
+
+  val variances: Variances[SymbolTable.this.type] = new Variances[SymbolTable.this.type](this)
+  type VarianceValidator = variances.VarianceValidator
+
+  val existentialsAndSkolems: ExistentialsAndSkolems[SymbolTable.this.type] = new ExistentialsAndSkolems[SymbolTable.this.type](this)
+
+  val translations: pickling.Translations[SymbolTable.this.type] = new pickling.Translations[SymbolTable.this.type](this)
+
+  val kinds: Kinds[SymbolTable.this.type] = new Kinds[SymbolTable.this.type](this)
+
+  val infoTransformerSupport: InfoTransformers[SymbolTable.this.type] = new InfoTransformers[SymbolTable.this.type](this)
+  type InfoTransformer = infoTransformerSupport.InfoTransformer
+
+  val annotationCheckerSupport: AnnotationCheckers[SymbolTable.this.type] = new AnnotationCheckers[SymbolTable.this.type](this)
+  type AnnotationChecker = annotationCheckerSupport.AnnotationChecker
+  final def addAnnotationChecker(checker: AnnotationChecker): Unit = annotationCheckerSupport.addAnnotationChecker(checker)
+  final def removeAllAnnotationCheckers(): Unit = annotationCheckerSupport.removeAllAnnotationCheckers()
+
+  val freshNames: FreshNames[SymbolTable.this.type] = new FreshNames[SymbolTable.this.type](this)
+  // default fresh name creator used to abstract over currentUnit.fresh and runtime fresh name creator
+  def currentFreshNameCreator: FreshNameCreator
+  final def freshTermName(prefix: String = nme.FRESH_TERM_NAME_PREFIX)(implicit creator: FreshNameCreator): TermName = freshNames.freshTermName(prefix)(creator)
+  final def freshTypeName(prefix: String)(implicit creator: FreshNameCreator): TypeName = freshNames.freshTypeName(prefix)(creator)
+  type FreshNameExtractor = freshNames.FreshNameExtractor
 
   trait ReflectStats extends BaseTypeSeqsStats
                         with TypesStats
@@ -77,11 +100,11 @@ abstract class SymbolTable extends macros.Universe
   protected def elapsedMessage(msg: String, startNs: Long) =
     msg + " in " + (TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)) + "ms"
 
-  def informProgress(msg: String)            = if (settings.verbose) inform("[" + msg + "]")
-  def informTime(msg: String, startNs: Long) = if (settings.verbose) informProgress(elapsedMessage(msg, startNs))
+  def informProgress(msg: String)            = if (settings.verbose.value) inform("[" + msg + "]")
+  def informTime(msg: String, startNs: Long) = if (settings.verbose.value) informProgress(elapsedMessage(msg, startNs))
   @inline final def informingProgress[T](msg: => String)(fn: => T) : T = {
-    val verbose: Boolean = settings.verbose
-    val start = if(verbose) System.nanoTime() else 0L
+    val verbose: Boolean = settings.verbose.value
+    val start = if (verbose) System.nanoTime() else 0L
     try fn finally if (verbose) informTime(msg, start)
   }
 
@@ -94,6 +117,8 @@ abstract class SymbolTable extends macros.Universe
   def erasurePhase: Phase
 
   def settings: MutableSettings
+
+  def isSymbolLockTracingEnabled: Boolean = isDeveloper
 
   /** Override with final implementation for inlining. */
   def debuglog(msg:  => String): Unit = if (settings.isDebug) log(msg)
@@ -192,7 +217,6 @@ abstract class SymbolTable extends macros.Universe
   /** Dump each symbol to stdout after shutdown.
    */
   final val traceSymbolActivity = System.getProperty("scalac.debug.syms") != null
-  @nowarn("cat=deprecation&msg=early initializers")
   object traceSymbols extends {
     val global: SymbolTable.this.type = SymbolTable.this
   } with util.TraceSymbolActivity
@@ -389,15 +413,13 @@ abstract class SymbolTable extends macros.Universe
 
   /** if there's a `package` member object in `pkgClass`, enter its members into it. */
   def openPackageModule(pkgClass: Symbol, force: Boolean = false): Unit = {
-
-    val pkgModule = pkgClass.packageObject
+    val pkgModule  = pkgClass.packageObject
     def fromSource = pkgModule.rawInfo match {
       case ltp: SymLoader => ltp.fromSource
       case _ => false
     }
-    if (pkgModule.isModule && !fromSource) {
+    if (pkgModule.isModule && !fromSource)
       openPackageModule(pkgModule, pkgClass)
-    }
   }
 
   object perRunCaches {
@@ -409,7 +431,7 @@ abstract class SymbolTable extends macros.Universe
     private[this] var caches = List[WeakReference[Clearable]]()
     private[this] var javaCaches = List[JavaClearable[_]]()
 
-    def recordCache[T <: Clearable](cache: T): T = {
+    def recordCache[T <: Clearable](cache: T): cache.type = {
       cache match {
         case jc: JavaClearable[_] =>
           javaCaches ::= jc
@@ -420,7 +442,7 @@ abstract class SymbolTable extends macros.Universe
     }
 
     /** Closes the provided classloader at the conclusion of this Run */
-    final def recordClassloader(loader: ClassLoader): ClassLoader = {
+    final def recordClassloader(loader: ClassLoader): loader.type = {
       def attemptClose(loader: ClassLoader): Unit = {
         loader match {
           case u: URLClassLoader => debuglog("Closing classloader " + u); u.close()
@@ -448,7 +470,7 @@ abstract class SymbolTable extends macros.Universe
       }
     }
 
-    def clearAll() = {
+    def clearAll(): Unit = {
       debuglog("Clearing " + (caches.size + javaCaches.size) + " caches.")
       caches foreach (ref => Option(ref.get).foreach(_.clear()))
       caches = caches.filterNot(_.get == null)
@@ -457,12 +479,16 @@ abstract class SymbolTable extends macros.Universe
       javaCaches = javaCaches.filter(_.isValid)
     }
 
-    def newWeakMap[K, V]()        = recordCache(mutable.WeakHashMap[K, V]())
-    def newMap[K, V]()            = recordCache(mutable.HashMap[K, V]())
-    def newSet[K]()               = recordCache(mutable.HashSet[K]())
-    def newWeakSet[K <: AnyRef]() = recordCache(new WeakHashSet[K]())
+    def newWeakMap[K, V]()        = recordCache(mutable.WeakHashMap.empty[K, V])
+    def newMap[K, V]()            = recordCache(mutable.HashMap.empty[K, V])
+    def newSet[K]()               = recordCache(mutable.HashSet.empty[K])
+    def newWeakSet[K <: AnyRef]() = recordCache(WeakHashSet.empty[K])
 
-    def newAnyRefMap[K <: AnyRef, V]() = recordCache(mutable.AnyRefMap[K, V]())
+    @nowarn("cat=deprecation")
+    def newAnyRefMap[K <: AnyRef, V]() = recordCache(mutable.AnyRefMap.empty[K, V])
+    @nowarn("cat=deprecation")
+    def newAnyRefMap[K <: AnyRef, V](default: K => V) = recordCache(mutable.AnyRefMap.withDefault[K, V](default))
+
     /**
       * Register a cache specified by a factory function and (optionally) a cleanup function.
       *
@@ -508,12 +534,6 @@ abstract class SymbolTable extends macros.Universe
 
   @deprecated("use enteringPhase", "2.10.0") // Used in sbt 0.12.4
   @inline final def atPhase[T](ph: Phase)(op: => T): T = enteringPhase(ph)(op)
-
-
-  /**
-   * Adds the `sm` String interpolator to a [[scala.StringContext]].
-   */
-  implicit val StringContextStripMarginOps: StringContext => StringContextStripMarginOps = util.StringContextStripMarginOps
 
   protected[scala] def currentRunProfilerBeforeCompletion(root: Symbol, associatedFile: AbstractFile): Unit = ()
   protected[scala] def currentRunProfilerAfterCompletion(root: Symbol, associatedFile: AbstractFile): Unit = ()

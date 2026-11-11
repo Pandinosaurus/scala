@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -104,7 +104,7 @@ trait MapOps[K, V, +CC[X, Y] <: MapOps[X, Y, CC, _], +C <: MapOps[K, V, CC, C]]
   def update(key: K, value: V): Unit = { coll += ((key, value)) }
 
   /**
-   * Update a mapping for the specified key and its current optionally-mapped value
+   * Update a mapping for the specified key and its current optionally mapped value
    * (`Some` if there is current mapping, `None` if not).
    *
    * If the remapping function returns `Some(v)`, the mapping is updated with the new value `v`.
@@ -112,7 +112,7 @@ trait MapOps[K, V, +CC[X, Y] <: MapOps[X, Y, CC, _], +C <: MapOps[K, V, CC, C]]
    * If the function itself throws an exception, the exception is rethrown, and the current mapping is left unchanged.
    *
    * @param key the key value
-   * @param remappingFunction a partial function that receives current optionally-mapped value and return a new mapping
+   * @param remappingFunction a function that receives current optionally mapped value and return a new mapping
    * @return the new value associated with the specified key
    */
   def updateWith(key: K)(remappingFunction: Option[V] => Option[V]): Option[V] = {
@@ -128,22 +128,22 @@ trait MapOps[K, V, +CC[X, Y] <: MapOps[X, Y, CC, _], +C <: MapOps[K, V, CC, C]]
 
   /** If given key is already in this map, returns associated value.
    *
-   *  Otherwise, computes value from given expression `op`, stores with key
+   *  Otherwise, computes value from given expression `defaultValue`, stores with key
    *  in map and returns that value.
    *
-   *  Concurrent map implementations may evaluate the expression `op`
-   *  multiple times, or may evaluate `op` without inserting the result.
+   *  Concurrent map implementations may evaluate the expression `defaultValue`
+   *  multiple times, or may evaluate `defaultValue` without inserting the result.
    *
    *  @param  key the key to test
-   *  @param  op  the computation yielding the value to associate with `key`, if
+   *  @param  defaultValue  the computation yielding the value to associate with `key`, if
    *              `key` is previously unbound.
    *  @return     the value associated with key (either previously or as a result
    *              of executing the method).
    */
-  def getOrElseUpdate(key: K, op: => V): V =
+  def getOrElseUpdate(key: K, @deprecatedName("op", since="2.13.13") defaultValue: => V): V =
     get(key) match {
       case Some(v) => v
-      case None => val d = op; this(key) = d; d
+      case None => val d = defaultValue; this(key) = d; d
     }
 
   /** Removes a key from this map, returning the value associated previously

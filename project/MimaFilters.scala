@@ -13,7 +13,7 @@ object MimaFilters extends AutoPlugin {
   import autoImport._
 
   override val globalSettings = Seq(
-    mimaReferenceVersion := Some("2.13.8"),
+    mimaReferenceVersion := Some("2.13.18"),
   )
 
   val mimaFilters: Seq[ProblemFilter] = Seq[ProblemFilter](
@@ -31,11 +31,64 @@ object MimaFilters extends AutoPlugin {
     ProblemFilters.exclude[DirectMissingMethodProblem]("scala.Predef#ArrayCharSequence.isEmpty"),
     ProblemFilters.exclude[DirectMissingMethodProblem]("scala.runtime.ArrayCharSequence.isEmpty"),
 
-    // scala/scala#9819
-    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.collection.mutable.PriorityQueue#ResizableArrayAccess.p_ensureAdditionalSize"), // private[PriorityQueue]
-    ProblemFilters.exclude[MissingClassProblem]("scala.runtime.PStatics"),  // private[scala]
-    ProblemFilters.exclude[MissingClassProblem]("scala.runtime.PStatics$"), // private[scala]
+    // KEEP: make use of CompletionStage#handle to get a better performance than CompletionStage#whenComplete.
+    ProblemFilters.exclude[MissingTypesProblem]("scala.concurrent.impl.FutureConvertersImpl$P"),
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.concurrent.impl.FutureConvertersImpl#P.andThen"),
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.concurrent.impl.FutureConvertersImpl#P.apply"),
+    ProblemFilters.exclude[IncompatibleMethTypeProblem]("scala.concurrent.impl.FutureConvertersImpl#P.andThen"),
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.concurrent.impl.FutureConvertersImpl#P.accept"),
+    ProblemFilters.exclude[IncompatibleMethTypeProblem]("scala.concurrent.impl.FutureConvertersImpl#P.andThen"),
 
+    // KEEP: the CommonErrors object is not a public API
+    ProblemFilters.exclude[MissingClassProblem]("scala.collection.generic.CommonErrors"),
+    ProblemFilters.exclude[MissingClassProblem]("scala.collection.generic.CommonErrors$"),
+
+    // KEEP: new jdk 25 method in CharSequence => mixin forwarders
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.Predef#ArrayCharSequence.getChars"),
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.Predef#SeqCharSequence.getChars"),
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.collection.mutable.StringBuilder.getChars"),
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.runtime.ArrayCharSequence.getChars"),
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.runtime.SeqCharSequence.getChars"),
+
+    // scala/scala#11242
+    ProblemFilters.exclude[MissingClassProblem]("scala.collection.immutable.LazyList$MidEvaluation$"),
+    ProblemFilters.exclude[MissingClassProblem]("scala.collection.immutable.LazyList$InRace"),
+
+    // scala/scala#11242
+    ProblemFilters.exclude[MissingTypesProblem]("scala.collection.immutable.LazyList"), // superclass change from AbstractSeq to LazyListBase
+    ProblemFilters.exclude[MissingClassProblem]("scala.collection.immutable.LazyListBase*"), // private[immutable]
+
+    // scala/bug#13183: new private classes in the private[reflect] trait SynchronizedSymbols
+    ProblemFilters.exclude[MissingClassProblem]("scala.reflect.runtime.SynchronizedSymbols$SynchronizedStubClassSymbol"),
+    ProblemFilters.exclude[MissingClassProblem]("scala.reflect.runtime.SynchronizedSymbols$SynchronizedStubTermSymbol"),
+    ProblemFilters.exclude[NewMixinForwarderProblem]("scala.reflect.runtime.SynchronizedSymbols.newStubSymbol"),
+
+    // scala/bug#13202: lub/glb memo tables grouped into one holder, a single thread-local in the private[reflect] trait SynchronizedTypes
+    ProblemFilters.exclude[NewMixinForwarderProblem]("scala.reflect.runtime.SynchronizedTypes.lubResults"),
+    ProblemFilters.exclude[NewMixinForwarderProblem]("scala.reflect.runtime.SynchronizedTypes.glbResults"),
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.reflect.runtime.JavaUniverse.lubGlbCaches"),
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.reflect.runtime.JavaUniverse.lubGlbCaches_="),
+    ProblemFilters.exclude[ReversedMissingMethodProblem]("scala.reflect.runtime.SynchronizedTypes.lubGlbCaches"),
+    ProblemFilters.exclude[ReversedMissingMethodProblem]("scala.reflect.runtime.SynchronizedTypes.lubGlbCaches_="),
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.reflect.runtime.SynchronizedTypes.lubGlbCaches"),
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.reflect.runtime.SynchronizedTypes.lubGlbCaches_="),
+
+    // scala/bug#13203: thread-local override of internal state in the private[reflect] trait SynchronizedTypes
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.reflect.runtime.SynchronizedTypes.globalGlbDepth*"),
+    ProblemFilters.exclude[DirectMissingMethodProblem]("scala.reflect.runtime.JavaUniverse.globalGlbDepth*"),
+
+    // implementation traits of the reflect internal API (Kinds, Variances, GlbLubs, ...) are components of SymbolTable rather than
+    // mixins, so the private[reflect] runtime universe no longer has them as parents, nor their synthetic accessors
+    ProblemFilters.exclude[MissingTypesProblem]("scala.reflect.runtime.JavaUniverse"),
+    ProblemFilters.exclude[MissingTypesProblem]("scala.reflect.runtime.SymbolTable"),
+    ProblemFilters.exclude[MissingTypesProblem]("scala.reflect.runtime.SynchronizedOps"),
+    ProblemFilters.exclude[MissingTypesProblem]("scala.reflect.runtime.SynchronizedTypes"),
+    ProblemFilters.exclude[InheritedNewAbstractMethodProblem]("scala.reflect.runtime.SymbolTable.scala$reflect$internal$tpe$*"),
+    ProblemFilters.exclude[InheritedNewAbstractMethodProblem]("scala.reflect.runtime.SynchronizedOps.scala$reflect$internal$tpe$*"),
+    ProblemFilters.exclude[InheritedNewAbstractMethodProblem]("scala.reflect.runtime.SynchronizedTypes.scala$reflect$internal$tpe$*"),
+    ProblemFilters.exclude[InheritedNewAbstractMethodProblem]("scala.reflect.runtime.SymbolTable.GlbFailure*"),
+    ProblemFilters.exclude[InheritedNewAbstractMethodProblem]("scala.reflect.runtime.SynchronizedOps.GlbFailure*"),
+    ProblemFilters.exclude[InheritedNewAbstractMethodProblem]("scala.reflect.runtime.SynchronizedTypes.GlbFailure*"),
   )
 
   override val buildSettings = Seq(

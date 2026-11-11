@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -45,7 +45,7 @@ class Queue[A] protected (array: Array[AnyRef], start: Int, end: Int)
   override protected[this] def stringPrefix = "Queue"
 
   /**
-    * Add elements to the end of this queue
+    * Add elements to the end of this queue.
     *
     * @param elem
     * @return this
@@ -60,16 +60,16 @@ class Queue[A] protected (array: Array[AnyRef], start: Int, end: Int)
     */
   def enqueue(elem1: A, elem2: A, elems: A*): this.type = enqueue(elem1).enqueue(elem2).enqueueAll(elems)
 
-  /** Enqueues all elements in the given traversable object into the queue. The
-    *  last element in the traversable object will be on front of the new queue.
+  /** Enqueues all elements in the given iterable object into the queue. The
+    *  last element in the iterable object will be on front of the new queue.
     *
-    *  @param elems the traversable object.
+    *  @param elems the iterable object.
     *  @return this
     */
   def enqueueAll(elems: scala.collection.IterableOnce[A]): this.type = this ++= elems
 
   /**
-    * Removes the first element from this queue and returns it
+    * Removes the first element from this queue and returns it.
     *
     * @return
     * @throws NoSuchElementException when queue is empty
@@ -96,7 +96,7 @@ class Queue[A] protected (array: Array[AnyRef], start: Int, end: Int)
     removeAll(p)
 
   /**
-    * Returns and dequeues all elements from the queue which satisfy the given predicate
+    * Returns and dequeues all elements from the queue which satisfy the given predicate.
     *
     *  @param f   the predicate used for choosing elements
     *  @return The removed elements
@@ -110,7 +110,7 @@ class Queue[A] protected (array: Array[AnyRef], start: Int, end: Int)
     */
   @`inline` final def front: A = head
 
-  protected override def klone(): Queue[A] = {
+  override protected def klone(): Queue[A] = {
     val bf = newSpecificBuilder
     bf ++= this
     bf.result()

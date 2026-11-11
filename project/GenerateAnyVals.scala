@@ -280,7 +280,7 @@ trait GenerateAnyValTemplates {
   def headerTemplate = """/*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -503,7 +503,7 @@ override def getClass(): Class[Boolean] = ???
 }
 
 object GenerateAnyVals {
-  def run(outDir: java.io.File) {
+  def run(outDir: java.io.File): Unit = {
     val av = new GenerateAnyVals
 
     av.make() foreach { case (name, code ) =>

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -38,8 +38,9 @@ trait Reifiers { self: Quasiquotes =>
 
     /** Map that stores freshly generated names linked to the corresponding names in the reified tree.
      *  This information is used to reify names created by calls to freshTermName and freshTypeName.
+     *  Insertion-ordered: the iteration order fixes the order of the emitted vals.
      */
-    val nameMap = collection.mutable.HashMap.empty[Name, Set[TermName]].withDefault { _ => Set() }
+    val nameMap = collection.mutable.LinkedHashMap.empty[Name, List[TermName]].withDefault { _ => Nil }
 
     /** Wraps expressions into:
      *    a block which starts with a sequence of vals that correspond
@@ -259,7 +260,7 @@ trait Reifiers { self: Quasiquotes =>
       case Placeholder(hole: UnapplyHole) => hole.treeNoUnlift
       case FreshName(prefix) if prefix != nme.QUASIQUOTE_NAME_PREFIX =>
         def fresh() = c.freshName(TermName(nme.QUASIQUOTE_NAME_PREFIX))
-        def introduceName() = { val n = fresh(); nameMap(name) += n; n}
+        def introduceName() = { val n = fresh(); nameMap(name) :+= n; n}
         def result(n: Name) = if (isReifyingExpressions) Ident(n) else Bind(n, Ident(nme.WILDCARD))
         if (isReifyingPatterns) result(introduceName())
         else result(nameMap.get(name).map { _.head }.getOrElse { introduceName() })
@@ -319,7 +320,7 @@ trait Reifiers { self: Quasiquotes =>
      */
     def group[T](lst: List[T])(similar: (T, T) => Boolean) = lst.foldLeft[List[List[T]]](List()) {
       case (Nil, el) => List(List(el))
-      case (ll :+ (last @ (lastinit :+ lastel)), el) if similar(lastel, el) => ll :+ (last :+ el)
+      case (ll :+ (last @ _ :+ lastel), el) if similar(lastel, el) => ll :+ (last :+ el)
       case (ll, el) => ll :+ List(el)
     }
 
@@ -363,7 +364,7 @@ trait Reifiers { self: Quasiquotes =>
       case ParamPlaceholder(Hole(tree, DotDot)) => tree
       case SyntacticPatDef(mods, pat, tpt, rhs) =>
         reifyBuildCall(nme.SyntacticPatDef, mods, pat, tpt, rhs)
-      case SyntacticValDef(mods, p @ Placeholder(h: ApplyHole), tpt, rhs) if h.tpe <:< treeType =>
+      case SyntacticValDef(mods, Placeholder(h: ApplyHole), tpt, rhs) if h.tpe <:< treeType =>
         mirrorBuildCall(nme.SyntacticPatDef, reify(mods), h.tree, reify(tpt), reify(rhs))
     }
 

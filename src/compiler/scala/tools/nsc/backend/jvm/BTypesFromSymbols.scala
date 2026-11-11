@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -137,19 +137,19 @@ abstract class BTypesFromSymbols[G <: Global](val global: G) extends BTypes {
     MethodBType(paramBTypes, resultType)
   }
 
-  def bootstrapMethodArg(t: Constant, pos: Position): AnyRef = t match {
-    case Constant(mt: Type) =>
+  def bootstrapMethodArg(t: Constant, pos: Position): AnyRef = t.value match {
+    case mt: Type =>
       transformedType(mt) match {
         case mt1: MethodType =>
           methodBTypeFromMethodType(mt1, isConstructor = false).toASMType
-        case t =>
-          typeToBType(t).toASMType
+        case transformed =>
+          typeToBType(transformed).toASMType
       }
-    case c @ Constant(sym: Symbol) if sym.owner.isJavaDefined && sym.isStaticMember => staticHandleFromSymbol(sym)
-    case c @ Constant(sym: Symbol) => handleFromMethodSymbol(sym)
-    case c @ Constant(value: String) => value
-    case c @ Constant(value) if c.isNonUnitAnyVal => c.value.asInstanceOf[AnyRef]
-    case _ => reporter.error(pos, "Unable to convert static argument of ApplyDynamic into a classfile constant: " + t); null
+    case sym: Symbol if sym.owner.isJavaDefined && sym.isStaticMember => staticHandleFromSymbol(sym)
+    case sym: Symbol => handleFromMethodSymbol(sym)
+    case value: String => value
+    case value if t.isNonUnitAnyVal => value.asInstanceOf[AnyRef]
+    case _ => reporter.error(pos, s"Unable to convert static argument of ApplyDynamic into a classfile constant: $t"); null
   }
 
   def staticHandleFromSymbol(sym: Symbol): asm.Handle = {
@@ -233,8 +233,8 @@ abstract class BTypesFromSymbols[G <: Global](val global: G) extends BTypes {
           case SingleType(_, sym)      => primitiveOrClassToBType(sym)
           case ConstantType(_)         => typeToBType(t.underlying)
           case RefinedType(parents, _) => parents.map(typeToBType(_).asClassBType).reduceLeft((a, b) => a.jvmWiseLUB(b).get)
-          case AnnotatedType(_, t)     => typeToBType(t)
-          case ExistentialType(_, t)   => typeToBType(t)
+          case AnnotatedType(_, at)    => typeToBType(at)
+          case ExistentialType(_, et)  => typeToBType(et)
           case x                       => throw new MatchError(x)
         }
     }
@@ -305,24 +305,16 @@ abstract class BTypesFromSymbols[G <: Global](val global: G) extends BTypes {
     def javaClassfileFlags(classSym: Symbol): Int = {
       assert(classSym.isJava, s"Expected Java class symbol, got ${classSym.fullName}")
       import asm.Opcodes._
-      def enumFlags = ACC_ENUM | {
-        // Java enums have the `ACC_ABSTRACT` flag if they have a deferred method.
-        // We cannot trust `hasAbstractFlag`: the ClassfileParser adds `ABSTRACT` and `SEALED` to all
-        // Java enums for exhaustiveness checking.
-        val hasAbstractMethod = classSym.info.decls.exists(s => s.isMethod && s.isDeferred)
-        if (hasAbstractMethod) ACC_ABSTRACT else 0
-      }
-        // scala/bug#9393: the classfile / java source parser make java annotation symbols look like classes.
-        // here we recover the actual classfile flags.
-        ( if (classSym.hasJavaAnnotationFlag)                        ACC_ANNOTATION | ACC_INTERFACE | ACC_ABSTRACT else 0) |
-      ( if (classSym.isPublic)                                     ACC_PUBLIC    else 0) |
-      ( if (classSym.isFinal)                                      ACC_FINAL     else 0) |
+      // scala/bug#9393: the classfile / java source parser make java annotation symbols look like classes.
+      // here we recover the actual classfile flags.
+      (if (classSym.hasJavaAnnotationFlag) ACC_ANNOTATION | ACC_INTERFACE | ACC_ABSTRACT else 0) |
+      (if (classSym.isPublic)              ACC_PUBLIC    else 0) |
+      (if (classSym.isFinal)               ACC_FINAL     else 0) |
        // see the link above. javac does the same: ACC_SUPER for all classes, but not interfaces.)
-      ( if (classSym.isInterface)                                  ACC_INTERFACE else ACC_SUPER) |
-       // for Java enums, we cannot trust `hasAbstractFlag` (see comment in enumFlags))
-      ( if (!classSym.hasJavaEnumFlag && classSym.hasAbstractFlag) ACC_ABSTRACT  else 0) |
-      ( if (classSym.isArtifact)                                   ACC_SYNTHETIC else 0) |
-      ( if (classSym.hasJavaEnumFlag)                              enumFlags     else 0)
+      (if (classSym.isInterface)           ACC_INTERFACE else ACC_SUPER) |
+      (if (classSym.hasAbstractFlag)       ACC_ABSTRACT  else 0) |
+      (if (classSym.isArtifact)            ACC_SYNTHETIC else 0) |
+      (if (classSym.hasJavaEnumFlag)       ACC_ENUM      else 0)
     }
 
     // Check for hasAnnotationFlag for scala/bug#9393: the classfile / java source parsers add
@@ -651,7 +643,7 @@ abstract class BTypesFromSymbols[G <: Global](val global: G) extends BTypes {
   def mirrorClassClassBType(moduleClassSym: Symbol): ClassBType = {
     assert(isTopLevelModuleClass(moduleClassSym), s"not a top-level module class: $moduleClassSym")
     val internalName = moduleClassSym.javaBinaryNameString.stripSuffix(nme.MODULE_SUFFIX_STRING)
-    ClassBType(internalName, moduleClassSym, fromSymbol = true) { (c: ClassBType, moduleClassSym) =>
+    ClassBType(internalName, moduleClassSym, fromSymbol = true) { (_: ClassBType, moduleClassSym) =>
       val shouldBeLazy = moduleClassSym.isJavaDefined || !currentRun.compiles(moduleClassSym)
       val nested = Lazy.withLockOrEager(shouldBeLazy, exitingPickler(memberClassesForInnerClassTable(moduleClassSym)) map classBTypeFromSymbol)
       Right(ClassInfo(

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -32,10 +32,10 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
         case ap @ Apply(i @ Ident(_), Nil) if isCaseLabel(i.symbol) || isMatchEndLabel(i.symbol) =>
           currentTransformState.labelDefStates.get(i.symbol) match {
             case Some(state) =>
-              Block(StateTransitionStyle.UpdateAndContinue.trees(state, new StateSet), typed(literalUnit)).setType(definitions.UnitTpe)
+              Block(StateTransitionStyle.UpdateAndContinue.trees(state, new StateSet), typedCurrentPos(literalUnit)).setType(definitions.UnitTpe)
             case None => ap
           }
-        case tree => tree
+        case transformed => transformed
       }
     }
   }
@@ -60,7 +60,7 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
       val stats1 = mutable.ListBuffer[Tree]()
       def addNullAssigments(syms: Iterator[Symbol]): Unit = {
         for (fieldSym <- syms) {
-          stats1 += typed(Assign(currentTransformState.memberRef(fieldSym), gen.mkZero(fieldSym.info)))
+          stats1 += typedCurrentPos(Assign(currentTransformState.memberRef(fieldSym), gen.mkZero(fieldSym.info)))
         }
       }
       // Add pre-state null assigments at the beginning.
@@ -148,7 +148,7 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
         }
 
         allNextStates += nextState
-        stats += typed(Return(literalUnit).setSymbol(currentTransformState.applySym))
+        stats += typedCurrentPos(Return(literalUnit).setSymbol(currentTransformState.applySym))
       }
       if (state == StateAssigner.Terminal) {
         // noop
@@ -168,7 +168,7 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
   }
 
   /**
-   * An `AsyncBlockBuilder` builds a `ListBuffer[AsyncState]` based on the expressions of a `Block(stats, expr)` (see `Async.asyncImpl`).
+   * An `AsyncBlockBuilder` builds a `ListBuffer[AsyncState]` based on the expressions of a `Block(stats, expr)` (see `buildAsyncBlock`).
    *
    * @param stats       a list of expressions
    * @param expr        the last expression of the block
@@ -198,7 +198,7 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
 
     addStats()
 
-    private def addState(state: AsyncState): AsyncState = {
+    private def addState(state: AsyncState): state.type = {
       assert(building, "must be building to add state")
       assert(!statesMap.contains(state.state), "Duplicate state: " + state)
       statesMap(state.state) = state
@@ -214,7 +214,7 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
         addState(stateBuilder.build(endState, style = style))
       }
       if (isRoot && currState != endState) {
-        addState(new AsyncState(Nil, endState, Array(), true))
+        addState(new AsyncState(Nil, endState, Array(), isEmpty = true))
       }
     }
 
@@ -312,7 +312,7 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
               buildStateAndOpenNextState(afterLabelState, style = StateTransitionStyle.None)
             }
           } else if (containsAwait(rhs)) {
-            // A while loop containing an await. We assuming that the the backward branch is reachable across the async
+            // A while loop containing an await. We assuming that the backward branch is reachable across the async
             // code path and create a state for the `while` label.
             //
             // In theory we could avoid creating this state in code like:
@@ -370,7 +370,7 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
           addState(state)
           loop(rest, needsAfterState || state.nextStates.contains(afterState))
       }
-      loop(nestedStates, false)
+      loop(nestedStates, needsAfterState = false)
     }
   }
 
@@ -396,8 +396,8 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
     val blockBuilder = new AsyncBlockBuilder(stats, expr, startState, endState, startToEndUpdateStyle = StateTransitionStyle.Update)
 
     new AsyncBlock {
-      private val switchIds = mutable.AnyRefMap[Integer, Integer]()
-      private val emptyReplacements = mutable.AnyRefMap[Integer, Integer]()
+      private val switchIds = mutable.HashMap[Integer, Integer]()
+      private val emptyReplacements = mutable.HashMap[Integer, Integer]()
       private def switchIdOf(state: Integer) = switchIds(emptyReplacements.getOrElse(state, state))
 
       // render with http://graphviz.it/#/new
@@ -462,7 +462,7 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
         val asyncStatesInit = asyncStates.init // drop the terminal state which has no code.
         val throww          = Throw(Apply(Select(New(Ident(IllegalStateExceptionClass)), IllegalStateExceptionClass_NEW_String), List(gen.mkMethodCall(currentRun.runDefinitions.String_valueOf_Int, stateMemberRef :: Nil))))
         val body            =
-          typed(Match(stateMemberRef,
+          typedBasePos(Match(stateMemberRef,
                       asyncStatesInit.map(_.mkHandlerCaseForState) ++
                         List(CaseDef(Ident(nme.WILDCARD), EmptyTree,
                                      throww))))
@@ -480,7 +480,7 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
                 )
               ), EmptyTree)
         }
-        typed(LabelDef(transformState.whileLabel, Nil, Block(stateMatch :: Nil, Apply(Ident(transformState.whileLabel), Nil))))
+        typedBasePos(LabelDef(transformState.whileLabel, Nil, Block(stateMatch :: Nil, Apply(Ident(transformState.whileLabel), Nil))))
       }
 
       private def compactStates = true
@@ -490,7 +490,7 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
         val (initial :: Nil, rest) = all.partition(_.state == blockBuilder.startState): @unchecked
         val map = all.iterator.map(x => (x.state, x)).toMap
         val seen = mutable.HashSet[Int]()
-        seen.add(all.last.state)
+        seen.addOne(all.last.state)
         def followEmptyState(state: AsyncState): AsyncState = if (state.isEmpty && state.nextStates.size == 1) {
           val next = state.nextStates(0)
           if (next == blockBuilder.endState) state
@@ -506,7 +506,7 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
         }
         def loop(state: AsyncState): Unit = {
           if (!emptyReplacements.contains(state.state))
-            seen.add(state.state)
+            seen.addOne(state.state)
           for (i <- state.nextStates if !seen.contains(i) && i != StateAssigner.Terminal) {
             loop(map(i))
           }
@@ -522,10 +522,10 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
         live
       } else all
 
-      private val compactStateTransform = new AstTransformer {
+      private val compactStateTransform: AstTransformer = new AstTransformer {
         val transformState = currentTransformState
         override def transform(tree: Tree): Tree = tree match {
-          case as @ Apply(qual: Select, (lit @ Literal(Constant(i: Integer))) :: Nil) if qual.symbol == transformState.stateSetter && compactStates =>
+          case Apply(qual: Select, (lit @ Literal(Constant(i: Integer))) :: Nil) if qual.symbol == transformState.stateSetter && compactStates =>
             val replacement = switchIdOf(i)
             treeCopy.Apply(tree, qual, treeCopy.Literal(lit, Constant(replacement)):: Nil)
           case _: Match | _: CaseDef | _: Block | _: If | _: LabelDef =>
@@ -557,7 +557,7 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
       } else {
         val temp = awaitableResult.symbol.newTermSymbol(nme.trGetResult).setInfo(definitions.ObjectTpe)
         val tempVd = ValDef(temp, gen.mkMethodCall(currentTransformState.memberRef(currentTransformState.stateTryGet), tryyReference :: Nil))
-        typed(Block(
+        typedCurrentPos(Block(
           tempVd :: Nil,
         If(Apply(gen.mkAttributedSelect(currentTransformState.stateMachineRef(), definitions.Object_eq), gen.mkAttributedIdent(temp) :: Nil),
              Return(literalUnit),
@@ -571,7 +571,7 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
   // Comlete the Promise in the `result` field with the final successful result of this async block.
   private def completeSuccess(expr: Tree): Tree = {
     deriveTree(expr, definitions.UnitTpe) { expr =>
-      typed(Apply(currentTransformState.memberRef(currentTransformState.stateCompleteSuccess), expr :: Nil))
+      typedCurrentPos(Apply(currentTransformState.memberRef(currentTransformState.stateCompleteSuccess), expr :: Nil))
     }
   }
 
@@ -581,7 +581,7 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
     protected def mkStateTree(nextState: Int): Tree = {
       val transformState = currentTransformState
       val callSetter = Apply(transformState.memberRef(transformState.stateSetter), Literal(Constant(nextState)) :: Nil)
-      typed(callSetter.updateAttachment(StateTransitionTree))
+      typedCurrentPos(callSetter.updateAttachment(StateTransitionTree))
     }
   }
 
@@ -625,18 +625,18 @@ trait ExprBuilder extends TransformUtils with AsyncAnalysis {
             If(Apply(null_ne, Ident(transformState.applyTrParam) :: Nil),
               Apply(Ident(transformState.whileLabel), Nil),
               Block(toStats(callOnComplete(gen.mkAttributedIdent(tempAwaitableSym))), Return(literalUnit).setSymbol(transformState.applySym)))
-          typed(initAwaitableTemp) :: typed(initTempCompleted) :: mkStateTree(nextState) :: typed(ifTree) :: Nil
+          typedCurrentPos(initAwaitableTemp) :: typedCurrentPos(initTempCompleted) :: mkStateTree(nextState) :: typedCurrentPos(ifTree) :: Nil
         } else {
-          mkStateTree(nextState) :: toStats(typed(callOnComplete(awaitable))) ::: typed(Return(literalUnit)) :: Nil
+          mkStateTree(nextState) :: toStats(typedCurrentPos(callOnComplete(awaitable))) ::: typedCurrentPos(Return(literalUnit)) :: Nil
         }
       }
     }
 
-    /** Update the state variable and jump to the the while loop that encloses the state machine. */
+    /** Update the state variable and jump to the while loop that encloses the state machine. */
     case object UpdateAndContinue extends StateTransitionStyle {
       def trees(nextState: Int, stateSet: StateSet): List[Tree] = {
         stateSet += nextState
-        List(mkStateTree(nextState), typed(Apply(Ident(currentTransformState.whileLabel), Nil)))
+        List(mkStateTree(nextState), typedCurrentPos(Apply(Ident(currentTransformState.whileLabel), Nil)))
       }
     }
   }

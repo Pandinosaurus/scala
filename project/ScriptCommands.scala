@@ -28,9 +28,8 @@ object ScriptCommands {
   def setupPublishCoreNonOpt = setup("setupPublishCoreNonOpt") { args =>
     Seq(
       Global / baseVersionSuffix := "SHA-SNAPSHOT"
-    ) ++ (args match {
-      case Seq(url) => publishTarget(url)
-      case Nil => Nil
+    ) ++ (args flatMap {
+      case url => publishTarget(url)
     }) ++ noDocs
   }
 
@@ -38,10 +37,9 @@ object ScriptCommands {
     * The optional argument is the Artifactory snapshot repository URL. */
   def setupPublishCore = setup("setupPublishCore") { args =>
     Seq(
-      Global / baseVersionSuffix := "SHA-SNAPSHOT"
-    ) ++ (args match {
-      case Seq(url) => publishTarget(url)
-      case Nil => Nil
+      Global / baseVersionSuffix := "SHA-SNAPSHOT",
+    ) ++ (args flatMap {
+      case url => publishTarget(url)
     }) ++ noDocs ++ enableOptimizer
   }
 
@@ -49,10 +47,12 @@ object ScriptCommands {
     * The optional argument is the Artifactory snapshot repository URL. */
   def setupValidateTest = setup("setupValidateTest") { args =>
     Seq(
+      // include sha to prevent multiple builds running on the same jenkins worker from overriding each other
+      // sbtTest/scripted uses publishLocal
+      Global / baseVersionSuffix := "SHA-TEST-SNAPSHOT",
       LocalProject("test") / IntegrationTest / testOptions ++= Seq(Tests.Argument("--show-log"), Tests.Argument("--show-diff"))
-    ) ++ (args match {
-      case Seq(url) => Seq(Global / resolvers += "scala-pr" at url)
-      case Nil => Nil
+    ) ++ (args flatMap {
+      case url => Seq(Global / resolvers += "scala-pr" at url)
     }) ++ enableOptimizer
   }
 
@@ -106,15 +106,7 @@ object ScriptCommands {
       Global / baseVersion := ver,
       Global / baseVersionSuffix := "SPLIT",
       Global / resolvers += "scala-pr" at url,
-      Global / publishTo := Some("sonatype-releases" at "https://oss.sonatype.org/service/local/staging/deploy/maven2"),
-      Global / credentials ++= {
-        val user = env("SONA_USER")
-        val pass = env("SONA_PASS")
-        if (user != "" && pass != "")
-         List(Credentials("Sonatype Nexus Repository Manager", "oss.sonatype.org", user, pass))
-        else Nil
-      }
-      // pgpSigningKey and pgpPassphrase are set externally by travis / the bootstrap script, as the sbt-pgp plugin is not enabled by default
+      Global / publishTo := localStaging.value,
     ) ++ enableOptimizer
   }
 

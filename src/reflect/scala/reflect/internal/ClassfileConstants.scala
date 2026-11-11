@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -81,6 +81,7 @@ object ClassfileConstants {
   final val CONSTANT_NAMEANDTYPE   = 12
   final val CONSTANT_METHODHANDLE  = 15
   final val CONSTANT_METHODTYPE    = 16
+  final val CONSTANT_DYNAMIC       = 17
   final val CONSTANT_INVOKEDYNAMIC = 18
   final val CONSTANT_MODULE        = 19
   final val CONSTANT_PACKAGE       = 20
@@ -353,7 +354,7 @@ object ClassfileConstants {
       case JAVA_ACC_STATIC     => STATIC
       case JAVA_ACC_ABSTRACT   => if (isClass) ABSTRACT else DEFERRED
       case JAVA_ACC_INTERFACE  => TRAIT | INTERFACE | ABSTRACT
-      case JAVA_ACC_ENUM       => JAVA_ENUM
+      case JAVA_ACC_ENUM       => if (isClass) JAVA_ENUM | SEALED else JAVA_ENUM
       case JAVA_ACC_ANNOTATION => JAVA_ANNOTATION
       case _                   => 0L
     }

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -35,8 +35,8 @@ import scala.tools.nsc.util.InterruptReq
  *  completely typechecked in the following ways:
 
  *  1. by a new call to reloadSources. This starts a new background compiler pass with a new typer run.
- *  2. by a call to askTypeTree. This starts a new typer run if the forceReload parameter = true
- *  3. by a call to askTypeAt, askTypeCompletion, askScopeCompletion, askToDoFirst, askLinkPos, askLastType.
+ *  2. by a call to askType. This starts a new typer run if the forceReload parameter = true
+ *  3. by a call to askTypeAt, askTypeCompletion, askScopeCompletion, askToDoFirst, askLinkPos.
  *  4. by raising an exception in the scheduler.
  *  5. by passing a high-priority action wrapped in ask { ... }.
  *
@@ -207,7 +207,7 @@ trait CompilerControl { self: Global =>
     postWorkItem(new AskLoadedTypedItem(source, keepLoaded, response))
 
   final def askLoadedTyped(source: SourceFile, response: Response[Tree]): Unit =
-    askLoadedTyped(source, false, response)
+    askLoadedTyped(source, keepLoaded = false, response)
 
   /** If source if not yet loaded, get an outline view with askParseEntered.
    *  If source is loaded, wait for it to be typechecked.

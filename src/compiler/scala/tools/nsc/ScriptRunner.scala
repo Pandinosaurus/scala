@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -148,7 +148,7 @@ abstract class AbstractScriptRunner(settings: GenericRunnerSettings) extends Scr
      */
     util.waitingForThreads {
       // either update the jar or don't use a cache jar at all, just use the class files, if they exist
-      if (settings.save) withLatestJar()
+      if (settings.save.value) withLatestJar()
       else {
         compile match {
           case Some(cp) if hasClassToRun(cp) => handler(cp.path)
@@ -170,10 +170,11 @@ abstract class AbstractScriptRunner(settings: GenericRunnerSettings) extends Scr
 
   final def runScript(scriptFile: String, scriptArgs: List[String]): Option[Throwable] = {
     val f = File(scriptFile)
+    def usingCompilationServer = settings.Yscriptrunner.valueSetByUser.map(_ != "default").getOrElse(false)
     if (!f.exists) Some(new IOException(s"no such file: $scriptFile"))
     else if (!f.canRead) Some(new IOException(s"can't read: $scriptFile"))
     else if (f.isDirectory) Some(new IOException(s"can't compile a directory: $scriptFile"))
-    else if (!settings.nc && !f.isFile) Some(new IOException(s"compile server requires a regular file: $scriptFile"))
+    else if (!f.isFile && usingCompilationServer) Some(new IOException(s"compile server requires a regular file: $scriptFile"))
     else withCompiledScript(scriptFile) { runCompiled(_, scriptArgs) }
   }
 

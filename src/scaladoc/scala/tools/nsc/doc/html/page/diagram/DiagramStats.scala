@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -49,7 +49,7 @@ object DiagramStats {
   private[this] var fixedImages = 0
 
   def printStats(settings: Settings) = {
-    if (settings.docDiagramsDebug) {
+    if (settings.docDiagramsDebug.value) {
       settings.printMsg("\nDiagram generation running time breakdown:\n")
       filterTrack.printStats(settings.printMsg)
       modelTrack.printStats(settings.printMsg)

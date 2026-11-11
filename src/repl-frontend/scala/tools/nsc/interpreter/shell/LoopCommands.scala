@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -89,9 +89,21 @@ trait LoopCommands {
     val formatStr  = s"%-${usageWidth}s %s"
 
     echo("All commands can be abbreviated, e.g., :he instead of :help.")
-
-    for (cmd <- commands) echo(formatStr.format(cmd.usageMsg, cmd.help))
     echo("")
+    echo("Core commands:")
+
+    val implementedInScala3 =
+      Set("help", "load", "quit", "type", "doc", "imports",
+        "reset", "settings", "silent")
+    val (main, more) = commands.partition(cmd => implementedInScala3(cmd.name))
+
+    for (cmd <- main) echo(formatStr.format(cmd.usageMsg, cmd.help))
+    echo("")
+
+    echo("Additional commands, not implemented in Scala 3:")
+    for (cmd <- more) echo(formatStr.format(cmd.usageMsg, cmd.help))
+    echo("")
+
     echo("Useful default key bindings:")
     echo("  TAB           code completion")
     echo("  CTRL-ALT-T    show type at cursor, hit again to show code with types/implicits inferred.")
@@ -144,7 +156,7 @@ trait LoopCommands {
               def complete(buffer: String, cursor: Int, filter: Boolean) =
                 CompletionResult(buffer, cursor = 1, List(CompletionCandidate(completion)), "", "")
             }
-          case cmd :: rest =>
+          case cmd :: _ =>
             new Completion {
               def complete(buffer: String, cursor: Int, filter: Boolean) =
                 CompletionResult(buffer, cursor = 1, cmds.map(cmd => CompletionCandidate(":" + cmd.name)), "", "")

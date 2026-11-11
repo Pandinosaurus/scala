@@ -13,7 +13,7 @@ class CompletionTest {
 
   def newIMain(classBased: Boolean = false): IMain = {
     val settings = new Settings()
-    settings.Xjline.value = "off"
+    settings.Xnojline.value = true
     settings.usejavacp.value = true
     settings.Yreplclassbased.value = classBased
 
@@ -94,6 +94,9 @@ class CompletionTest {
     checkExact(completer, "object O { private def x_y_z = 1; x_y", "}")("x_y_z")
     checkExact(completer, "object x_y_z; import x_y")("x_y_z")
 
+    checkExact(completer, "object O { def `1 thing` = 1 }; O.")("1 thing")
+    checkExact(completer, "object O { def `<x>` = 1 }; O.")("<x>")
+
     checkExact(completer, "object x_y_z { def a_b_c }; import x_y_z.a_b")("a_b_c")
 
     checkExact(completer, "object X { private[this] def definition = 0; def")("definition")
@@ -117,6 +120,19 @@ class CompletionTest {
   }
 
   @Test
+  def backticks(): Unit = {
+    val intp = newIMain()
+    val completer = new ReplCompletion(intp)
+
+    checkExact(completer, "object X { def `Foo Bar` = 0; this.`Foo ", after = "` }")("Foo Bar")
+    checkExact(completer, "val `Foo Bar` = 0; `Foo ", after = "`")("Foo Bar")
+    checkExact(completer, "def foo(`Foo Bar`: Int) { `Foo ", after = "` }")("Foo Bar")
+    checkExact(completer, "def foo(`Foo Bar!`: Int) { `Foo ", after = "` }")("Foo Bar!")
+    checkExact(completer, "def foo(`Foo Bar$`: Int) { `Foo ", after = "` }")("Foo Bar$")
+    checkExact(completer, "def foo(`$Foo$Bar$`: Int) { `$Foo ", after = "` }")("$Foo$Bar$")
+  }
+
+  @Test
   def annotations(): Unit = {
     val completer = setup()
     checkExact(completer, "def foo[@specialize", " A]")("specialized")
@@ -130,6 +146,13 @@ class CompletionTest {
     val completer = setup()
     checkExact(completer, """val x_y_z = 1; s"${x_""", "}\"")("x_y_z")
     checkExact(completer, """val x_y_z = 1; s"${x_""", "\"")("x_y_z")
+  }
+
+  @Test
+  def completionsAfterBrokenInterpolation(): Unit = {
+    val completer = setup()
+    checkExact(completer, "val x_y_z = 1; val a = s\"$\"\nval b = x_y")("x_y_z")
+    checkExact(completer, "val x_y_z = 1; val a = \"\nval b = x_y")("x_y_z")
   }
 
   @Test

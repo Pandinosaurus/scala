@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -255,6 +255,9 @@ trait Trees { self: Universe =>
      *  For example, the `List` part of `Ident(TermName("List"))`.
      */
     def name: Name
+
+    /** Position of the subtree bearing the name. */
+    def namePos: Position
   }
 
   /** A tree which references a symbol-carrying entity.

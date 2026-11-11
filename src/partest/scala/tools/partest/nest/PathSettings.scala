@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -44,5 +44,4 @@ class PathSettings(testSourcePath: String) {
   val srcDir = Directory((testRoot / testSourcePath).toCanonical)
 
   def srcSpecLib     = findJar("instrumented", Directory(srcDir / "speclib"))
-  def srcCodeLib     = findJar("code",  Directory(srcDir / "codelib"), Directory(testRoot / "files" / "codelib") /* work with --srcpath pending */)
 }

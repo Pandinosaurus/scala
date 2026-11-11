@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -44,18 +44,52 @@ import scala.util.control.{ControlThrowable, NonFatal}
   * import java.io.{BufferedReader, FileReader}
   * import scala.util.{Try, Using}
   *
+  * val files = List("file1.txt", "file2.txt", "file3.txt", "file4.txt")
   * val lines: Try[Seq[String]] = Using.Manager { use =>
-  *   val r1 = use(new BufferedReader(new FileReader("file1.txt")))
-  *   val r2 = use(new BufferedReader(new FileReader("file2.txt")))
-  *   val r3 = use(new BufferedReader(new FileReader("file3.txt")))
-  *   val r4 = use(new BufferedReader(new FileReader("file4.txt")))
+  *   // acquire resources
+  *   def mkreader(filename: String) = use(new BufferedReader(new FileReader(filename)))
   *
   *   // use your resources here
   *   def lines(reader: BufferedReader): Iterator[String] =
   *     Iterator.continually(reader.readLine()).takeWhile(_ != null)
   *
-  *   (lines(r1) ++ lines(r2) ++ lines(r3) ++ lines(r4)).toList
+  *   files.map(mkreader).flatMap(lines)
   * }
+  * }}}
+  *
+  * Composed or "wrapped" resources may be acquired in order of construction,
+  * if "underlying" resources are not closed. Although redundant in this case,
+  * here is the previous example with a wrapped call to `use`:
+  * {{{
+  *   def mkreader(filename: String) = use(new BufferedReader(use(new FileReader(filename))))
+  * }}}
+  *
+  * Custom resources can be registered on construction by requiring an implicit `Manager`.
+  * This ensures they will be released even if composition fails:
+  * {{{
+  * import scala.util.Using
+  *
+  * case class X(x: String)(implicit mgr: Using.Manager) extends AutoCloseable {
+  *   override def close() = println(s"CLOSE $x")
+  *   mgr.acquire(this)
+  * }
+  * case class Y(y: String)(x: String)(implicit mgr: Using.Manager) extends AutoCloseable {
+  *   val xres = X(x)
+  *   override def close() = println(s"CLOSE $y")
+  *   // an error during construction releases previously acquired resources
+  *   require(y != null, "y is null")
+  *   mgr.acquire(this)
+  * }
+  *
+  * Using.Manager { implicit mgr =>
+  *   val y = Y("Y")("X")
+  *   println(s"USE $y")
+  * }
+  * println {
+  *   Using.Manager { implicit mgr =>
+  *     Y(null)("X")
+  *   }
+  * } // Failure(java.lang.IllegalArgumentException: requirement failed: y is null)
   * }}}
   *
   * If you wish to avoid wrapping management and operations in a `Try`, you can use
@@ -91,8 +125,8 @@ import scala.util.control.{ControlThrowable, NonFatal}
   *   - `java.lang.LinkageError`
   *   - `java.lang.InterruptedException` and `java.lang.ThreadDeath`
   *   - [[scala.util.control.NonFatal fatal exceptions]], excluding `scala.util.control.ControlThrowable`
+  *   - all other exceptions, excluding `scala.util.control.ControlThrowable`
   *   - `scala.util.control.ControlThrowable`
-  *   - all other exceptions
   *
   * When more than two exceptions are thrown, the first two are combined and
   * re-thrown as described above, and each successive exception thrown is combined
@@ -148,7 +182,7 @@ object Using {
       * the resource is released when the manager is closed, and then
       * returns the (unmodified) resource.
       */
-    def apply[R: Releasable](resource: R): R = {
+    def apply[R: Releasable](resource: R): resource.type = {
       acquire(resource)
       resource
     }
@@ -226,13 +260,14 @@ object Using {
   }
 
   private def preferentiallySuppress(primary: Throwable, secondary: Throwable): Throwable = {
+    @annotation.nowarn("cat=deprecation")  // avoid warning on mention of ThreadDeath
     def score(t: Throwable): Int = t match {
       case _: VirtualMachineError                   => 4
       case _: LinkageError                          => 3
       case _: InterruptedException | _: ThreadDeath => 2
-      case _: ControlThrowable                      => 0
+      case _: ControlThrowable                      => -1 // below everything
       case e if !NonFatal(e)                        => 1 // in case this method gets out of sync with NonFatal
-      case _                                        => -1
+      case _                                        => 0
     }
     @inline def suppress(t: Throwable, suppressed: Throwable): Throwable = { t.addSuppressed(suppressed); t }
 
@@ -386,6 +421,8 @@ object Using {
   }
 
   object Releasable {
+    // prefer explicit types 2.14
+    //implicit val AutoCloseableIsReleasable: Releasable[AutoCloseable] = new Releasable[AutoCloseable] {}
     /** An implicit `Releasable` for [[java.lang.AutoCloseable `AutoCloseable`s]]. */
     implicit object AutoCloseableIsReleasable extends Releasable[AutoCloseable] {
       def release(resource: AutoCloseable): Unit = resource.close()

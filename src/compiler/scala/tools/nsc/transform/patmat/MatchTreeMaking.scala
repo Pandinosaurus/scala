@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -12,7 +12,7 @@
 
 package scala.tools.nsc.transform.patmat
 
-import scala.annotation.tailrec
+import scala.annotation._
 import scala.collection.mutable
 import scala.tools.nsc.symtab.Flags.{SYNTHETIC, ARTIFACT}
 import scala.tools.nsc.Reporting.WarningCategory
@@ -24,10 +24,10 @@ import scala.tools.nsc.Reporting.WarningCategory
 trait MatchTreeMaking extends MatchCodeGen with Debugging {
   import global._, definitions._, CODE._
 
-  final case class Suppression(suppressExhaustive: Boolean, suppressUnreachable: Boolean)
+  final case class Suppression private (suppressExhaustive: Boolean, suppressUnreachable: Boolean)
   object Suppression {
-    val NoSuppression = Suppression(false, false)
-    val FullSuppression = Suppression(true, true)
+    val NoSuppression = new Suppression(suppressExhaustive=false, suppressUnreachable=false)
+    val FullSuppression = new Suppression(suppressExhaustive=true, suppressUnreachable=true)
   }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -89,6 +89,15 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
 
     sealed trait NoNewBinders extends TreeMaker {
       protected val localSubstitution: Substitution = EmptySubstitution
+    }
+
+    /** A dummy tree maker used to mark wildcard patterns.
+     * This is later used to back off from exhaustivity checking.
+     */
+    case object DummyTreeMaker extends TreeMaker with NoNewBinders {
+      def pos = EmptyTree.pos
+
+      def chainBefore(next: Tree)(casegen: Casegen): Tree = next
     }
 
     case class TrivialTreeMaker(tree: Tree) extends TreeMaker with NoNewBinders {
@@ -326,7 +335,7 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
       trait TypeTestCondStrategy {
         type Result
 
-        def withOuterTest(orig: Result)(testedBinder: Symbol, expectedTp: Type): Result = orig
+        def withOuterTest(orig: Result)(@unused testedBinder: Symbol, @unused expectedTp: Type): Result = orig
         // TODO: can probably always widen
         def typeTest(testedBinder: Symbol, expectedTp: Type): Result
         def nonNullTest(testedBinder: Symbol): Result
@@ -581,7 +590,7 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
             ((casegen: Casegen) => combineExtractors(altTreeMakers :+ TrivialTreeMaker(casegen.one(TRUE)))(casegen))
           )
 
-          val findAltMatcher = codegenAlt.matcher(EmptyTree, NoSymbol, BooleanTpe)(combinedAlts, Some(x => FALSE))
+          val findAltMatcher = codegenAlt.matcher(EmptyTree, NoSymbol, BooleanTpe)(combinedAlts, Some(_ => FALSE))
           codegenAlt.ifThenElseZero(findAltMatcher, substitution(next))
         }
       }
@@ -601,50 +610,76 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
 
 
     def removeSubstOnly(makers: List[TreeMaker]) = makers filterNot (_.isInstanceOf[SubstOnlyTreeMaker])
+    def removeDummy(makers: List[TreeMaker]) = makers filterNot (_ == DummyTreeMaker)
 
     // a foldLeft to accumulate the localSubstitution left-to-right
     // it drops SubstOnly tree makers, since their only goal in life is to propagate substitutions to the next tree maker, which is fulfilled by propagateSubstitution
     def propagateSubstitution(treeMakers: List[TreeMaker], initial: Substitution): List[TreeMaker] = {
       var accumSubst: Substitution = initial
-      treeMakers foreach { maker =>
+      removeDummy(treeMakers) foreach { maker =>
         maker incorporateOuterSubstitution accumSubst
         accumSubst = maker.substitution
       }
-      removeSubstOnly(treeMakers)
+      removeSubstOnly(removeDummy(treeMakers))
     }
 
-    def getSuppression(scrut: Tree): Suppression = scrut match {
-      case _ if settings.XnoPatmatAnalysis => Suppression.FullSuppression
-      case Typed(tree, tpt)                =>
-        val suppressExhaustive  = tpt.tpe.hasAnnotation(UncheckedClass)
-        val suppressUnreachable = tree match {
-          case Ident(name) => name.startsWith(nme.CHECK_IF_REFUTABLE_STRING) // scala/bug#7183 don't warn for withFilter's that turn out to be irrefutable.
-          case _           => false
-        }
-        Suppression(suppressExhaustive, suppressUnreachable)
-      case _                               => Suppression.NoSuppression
-    }
-
-    def requiresSwitch(scrut: Tree, cases: List[List[TreeMaker]]): Boolean = {
-      if (settings.XnoPatmatAnalysis) false
+    def getSuppression(scrut: Tree): Suppression =
+      if (settings.XnoPatmatAnalysis.value) Suppression.FullSuppression
       else scrut match {
         case Typed(tree, tpt) =>
+          val suppressExhaustive  = tpt.tpe.hasAnnotation(UncheckedClass)
+          val suppressUnreachable = tree match {
+            // scala/bug#7183 don't warn for withFilter's that turn out to be irrefutable.
+            case Ident(name) => name.startsWith(nme.CHECK_IF_REFUTABLE_STRING)
+            case _ => false
+          }
+          Suppression(suppressExhaustive, suppressUnreachable)
+        case _ => Suppression.NoSuppression
+      }
+
+    def requiresSwitch(scrut: Tree, cases: List[List[TreeMaker]]): Boolean = {
+      if (settings.XnoPatmatAnalysis.value) false
+      else scrut match {
+        case Typed(_, tpt) =>
           val hasSwitchAnnotation = treeInfo.isSwitchAnnotation(tpt.tpe)
           // matches with two or fewer cases need not apply for switchiness (if-then-else will do)
           // `case 1 | 2` is considered as two cases.
           def exceedsTwoCasesOrAlts = {
             // avoids traversing the entire list if there are more than 3 elements
-            def lengthMax3(l: List[List[TreeMaker]]): Int = l match {
-              case a :: b :: c :: _ => 3
+            def lengthMax3(cases: List[List[TreeMaker]]): Int = cases match {
+              case _ :: _ :: _ :: _ => 3
               case cases            => cases.map {
                 case AlternativesTreeMaker(_, alts, _) :: _ => lengthMax3(alts)
-                case c                                      => 1
+                case _                                      => 1
               }.sum
             }
             lengthMax3(cases) > 2
           }
           hasSwitchAnnotation && exceedsTwoCasesOrAlts
         case _ => false
+      }
+    }
+
+    // See the use of RegularSwitchMaker by SwitchEmission#emitSwitch, which this code emulates or duplicates.
+    private object Switchable {
+      val switchableTpe = Set(ByteTpe, ShortTpe, IntTpe, CharTpe, StringTpe)
+
+      def apply(scrutSym: Symbol, cases: List[List[TreeMaker]]): Boolean = switchableTpe(scrutSym.tpe.dealiasWiden) && {
+        def switchable(tms: List[TreeMaker]): Boolean =
+          tms.forall {
+            case EqualityTestTreeMaker(_, SwitchablePattern(), _) => true
+            case AlternativesTreeMaker(_, altss, _) => Switchable(scrutSym, altss)
+            case BodyTreeMaker(_, _) => true
+            case _ => false
+          }
+        cases.forall(switchable)
+      }
+
+      object SwitchablePattern {
+        def unapply(pat: Tree): Boolean = pat.tpe match {
+          case const: ConstantType => const.value.isIntRange || const.value.tag == StringTag || const.value.tag == NullTag
+          case _ => false
+        }
       }
     }
 
@@ -663,6 +698,12 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
           if (requiresSwitch(scrut, cases))
             typer.context.warning(scrut.pos, "could not emit switch for @switch annotated match", WarningCategory.OtherMatchAnalysis)
 
+          // If cases are switchable, suppress warning for exhaustivity.
+          // The switch was not emitted, probably because there aren't enough cases.
+          val suppression1 =
+            if (Switchable(scrutSym, cases)) suppression.copy(suppressExhaustive = true)
+            else suppression
+
           if (!cases.isEmpty) {
             // before optimizing, check cases for presence of a default case,
             // since DCE will eliminate trivial cases like `case _ =>`, even if they're the last one
@@ -675,7 +716,7 @@ trait MatchTreeMaking extends MatchCodeGen with Debugging {
               case _                              => matchFailGen
             }
 
-            analyzeCases(scrutSym, cases, pt, suppression)
+            analyzeCases(scrutSym, cases, pt, suppression1)
 
             val (optimizedCases, toHoist) = optimizeCases(scrutSym, cases, pt, selectorPos)
 

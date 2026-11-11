@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -145,7 +145,7 @@ public final class Statics {
 
   // @ForceInline would be nice here.
   public static void releaseFence() throws Throwable {
-    VM.RELEASE_FENCE.invoke();
+    VM.RELEASE_FENCE.invokeExact();
   }
 
   final static class VM {

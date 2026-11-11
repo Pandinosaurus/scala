@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,8 +14,8 @@ package scala
 package runtime
 
 final class RichByte(val self: Byte) extends AnyVal with ScalaWholeNumberProxy[Byte] {
-  protected def num = scala.math.Numeric.ByteIsIntegral
-  protected def ord = scala.math.Ordering.Byte
+  protected def num: scala.math.Numeric.ByteIsIntegral.type = scala.math.Numeric.ByteIsIntegral
+  protected def ord: scala.math.Ordering.Byte.type = scala.math.Ordering.Byte
 
   override def doubleValue = self.toDouble
   override def floatValue  = self.toFloat

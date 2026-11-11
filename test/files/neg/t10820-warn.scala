@@ -1,4 +1,4 @@
-// scalac: -Xfatal-warnings -Xlint:nonlocal-return
+//> using options -Werror -Wperformance
 //
 
 import util.Try

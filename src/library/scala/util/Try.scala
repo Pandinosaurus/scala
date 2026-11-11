@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -17,13 +17,15 @@ import scala.runtime.Statics
 import scala.util.control.NonFatal
 
 /**
- * The `Try` type represents a computation that may either result in an exception, or return a
- * successfully computed value. It's similar to, but semantically different from the [[scala.util.Either]] type.
+ * The `Try` type represents a computation that may fail during evaluation by raising an exception.
+ * It holds either a successfully computed value or the exception that was thrown.
+ * This is similar to the [[scala.util.Either]] type, but with different semantics.
  *
- * Instances of `Try[T]`, are either an instance of [[scala.util.Success]][T] or [[scala.util.Failure]][T].
+ * Instances of `Try[T]` are an instance of either [[scala.util.Success]][T] or [[scala.util.Failure]][T].
  *
- * For example, `Try` can be used to perform division on a user-defined input, without the need to do explicit
- * exception-handling in all of the places that an exception might occur.
+ * For example, consider a computation that performs division on user-defined input.
+ * `Try` can reduce or eliminate the need for explicit exception handling in all of the places
+ * where an exception might be thrown.
  *
  * Example:
  * {{{
@@ -57,9 +59,7 @@ import scala.util.control.NonFatal
  * ''Note'': only non-fatal exceptions are caught by the combinators on `Try` (see [[scala.util.control.NonFatal]]).
  * Serious system errors, on the other hand, will be thrown.
  *
- * ''Note:'': all Try combinators will catch exceptions and return failure unless otherwise specified in the documentation.
- *
- * `Try` comes to the Scala standard library after years of use as an integral part of Twitter's stack.
+ * ''Note:'': all `Try` combinators will catch exceptions and return failure unless otherwise specified in the documentation.
  */
 sealed abstract class Try[+T] extends Product with Serializable {
 
@@ -115,22 +115,22 @@ sealed abstract class Try[+T] extends Product with Serializable {
   /** Creates a non-strict filter, which eventually converts this to a `Failure`
    *  if the predicate is not satisfied.
    *
-   *  Note: unlike filter, withFilter does not create a new Try.
+   *  Note: unlike `filter`, `withFilter` does not create a new `Try`.
    *        Instead, it restricts the domain of subsequent
    *        `map`, `flatMap`, `foreach`, and `withFilter` operations.
    *
-   * As Try is a one-element collection, this may be a bit overkill,
-   * but it's consistent with withFilter on Option and the other collections.
+   * As `Try` is a one-element collection, this may be a bit overkill,
+   * but it's consistent with `withFilter` on `Option` and the other collections.
    *
    *  @param p   the predicate used to test elements.
    *  @return    an object of class `WithFilter`, which supports
    *             `map`, `flatMap`, `foreach`, and `withFilter` operations.
-   *             All these operations apply to those elements of this Try
+   *             All these operations apply to those elements of this `Try`
    *             which satisfy the predicate `p`.
    */
   @inline final def withFilter(p: T => Boolean): WithFilter = new WithFilter(p)
 
-  /** We need a whole WithFilter class to honor the "doesn't create a new
+  /** We need a whole `WithFilter` class to honor the "doesn't create a new
    *  collection" contract even though it seems unlikely to matter much in a
    *  collection with max size 1.
    */
@@ -149,7 +149,7 @@ sealed abstract class Try[+T] extends Product with Serializable {
 
   /**
    * Applies the given function `f` if this is a `Failure`, otherwise returns this if this is a `Success`.
-   * This is like map for the exception.
+   * This is like `map` for the exception.
    */
   def recover[U >: T](pf: PartialFunction[Throwable, U]): Try[U]
 
@@ -202,12 +202,21 @@ sealed abstract class Try[+T] extends Product with Serializable {
 }
 
 object Try {
-  /** Constructs a `Try` using the by-name parameter.  This
-   * method will ensure any non-fatal exception is caught and a
-   * `Failure` object is returned.
+  /** Constructs a `Try` using the by-name parameter as a result value.
+   *
+   *  The evaluation of `r` is attempted once.
+   *
+   *  Any non-fatal exception is caught and results in a `Failure`
+   *  that holds the exception.
+   *
+   *  @param r the result value to compute
+   *  @return the result of evaluating the value, as a `Success` or `Failure`
    */
   def apply[T](r: => T): Try[T] =
-    try Success(r) catch {
+    try {
+      val r1 = r
+      Success(r1)
+    } catch {
       case NonFatal(e) => Failure(e)
     }
 }
@@ -246,7 +255,6 @@ final case class Failure[+T](exception: Throwable) extends Try[T] {
   override def toEither: Either[Throwable, T] = Left(exception)
   override def fold[U](fa: Throwable => U, fb: T => U): U = fa(exception)
 }
-
 
 final case class Success[+T](value: T) extends Try[T] {
   override def isFailure: Boolean = false

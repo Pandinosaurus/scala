@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -18,6 +18,7 @@ import Flags._
 import scala.annotation.tailrec
 import scala.collection.mutable
 import scala.collection.mutable.{LinkedHashMap, LinkedHashSet}
+import scala.tools.nsc.Reporting.WarningCategory.LintPerformance
 
 abstract class LambdaLift extends InfoTransform {
   import global._
@@ -50,7 +51,7 @@ abstract class LambdaLift extends InfoTransform {
   }
 
   def transformInfo(sym: Symbol, tp: Type): Type =
-    if (sym.isCapturedVariable) capturedVariableType(sym, tpe = lifted(tp), erasedTypes = true)
+    if (sym.isCapturedVariable) capturedVariables.capturedVariableType(sym, tpe = lifted(tp), erasedTypes = true)
     else lifted(tp)
 
   protected def newTransformer(unit: CompilationUnit): AstTransformer =
@@ -263,7 +264,7 @@ abstract class LambdaLift extends InfoTransform {
 
         val join = nme.NAME_JOIN_STRING
         if (sym.isAnonymousFunction && sym.owner.isMethod) {
-          freshen("" + sym.name + join + nme.ensureNonAnon(sym.owner.name.toString) + join)
+          freshen(s"${sym.name}${nme.ensureNonAnon(join + sym.owner.name.toString)}$join")
         } else {
           val name = freshen(s"${sym.name}${join}")
           // scala/bug#5652 If the lifted symbol is accessed from an inner class, it will be made public. (where?)
@@ -492,27 +493,23 @@ abstract class LambdaLift extends InfoTransform {
           if (sym.isLocalToBlock) liftDef(withFreeParams)
           else withFreeParams
 
-        case ValDef(mods, name, tpt, rhs) =>
-          if (sym.isCapturedVariable) {
-            val tpt1 = TypeTree(sym.tpe) setPos tpt.pos
-
-            val refTypeSym = sym.tpe.typeSymbol
-
-            val factoryCall = typer.typedPos(rhs.pos) {
-              rhs match {
-                case EmptyTree =>
-                  val zeroMSym   = refZeroMethod(refTypeSym)
-                  gen.mkMethodCall(zeroMSym, Nil)
-                case arg =>
-                  val createMSym = refCreateMethod(refTypeSym)
-                  gen.mkMethodCall(createMSym, arg :: Nil)
-              }
+        case ValDef(mods, name, tpt, rhs) if sym.isCapturedVariable =>
+          val tpt1 = TypeTree(sym.tpe) setPos tpt.pos
+          val refTypeSym = sym.tpe.typeSymbol
+          val factoryCall = typer.typedPos(rhs.pos) {
+            rhs match {
+              case EmptyTree =>
+                val zeroMSym   = refZeroMethod(refTypeSym)
+                gen.mkMethodCall(zeroMSym, Nil)
+              case arg =>
+                val createMSym = refCreateMethod(refTypeSym)
+                gen.mkMethodCall(createMSym, arg :: Nil)
             }
-
-            treeCopy.ValDef(tree, mods, name, tpt1, factoryCall)
-          } else tree
-        case Return(Block(stats, value)) =>
-          Block(stats, treeCopy.Return(tree, value)) setType tree.tpe setPos tree.pos
+          }
+          if (settings.warnCaptured)
+            runReporting.warning(tree.pos, s"Modification of variable $name within a closure causes it to be boxed.", LintPerformance, sym)
+          treeCopy.ValDef(tree, mods, name, tpt1, factoryCall)
+        case ValDef(_, _, _, _) => tree
         case Return(expr) =>
           assert(sym == currentMethod, sym)
           tree

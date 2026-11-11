@@ -1,4 +1,4 @@
-// scalac: -Xsource:3.0
+//> using options -Xsource:3 -Xsource-features:implicit-resolution
 
 class Both[-A, +B]
 

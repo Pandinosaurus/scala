@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -54,7 +54,7 @@ trait UnCurry {
           // This transformation is described in UnCurryTransformer.dependentParamTypeErasure
           val packSymbolsMap = new TypeMap {
             // Wrapping in a TypeMap to reuse the code that opts for a fast path if the function is an identity.
-            def apply(tp: Type): Type = packSymbols(params, tp)
+            def apply(tp: Type): Type = existentialsAndSkolems.packSymbols(params, tp)
           }
           val existentiallyAbstractedParam1s = packSymbolsMap.mapOver(params1)
           val substitutedResult = restpe.substSym(params1, existentiallyAbstractedParam1s)
@@ -99,15 +99,14 @@ trait UnCurry {
           // while processing one of its superclasses (such as java.lang.Object). Since we
           // don't need the more precise `matches` semantics, we only check the symbol, which
           // is anyway faster and safer
-          for (decl <- decls if decl.annotations.exists(_.symbol == VarargsClass)) {
-            if (mexists(decl.paramss)(sym => definitions.isRepeatedParamType(sym.tpe))) {
-              varargOverloads += varargForwarderSym(clazz, decl, exitingPhase(phase)(decl.info))
-            }
-          }
+          for (decl <- decls)
+            if (decl.annotations.exists(_.symbol == VarargsClass)
+                && mexists(decl.paramss)(sym => definitions.isRepeatedParamType(sym.tpe)))
+              varargOverloads += varargForwarderSym(clazz, decl)
           if ((parents1 eq parents) && varargOverloads.isEmpty) tp
           else {
             val newDecls = decls.cloneScope
-            varargOverloads.foreach(newDecls.enter)
+            varargOverloads.foreach(newDecls.enter(_))
             ClassInfoType(parents1, newDecls, clazz)
           } // @MAT normalize in decls??
 
@@ -120,11 +119,9 @@ trait UnCurry {
     }
   }
 
-  private def varargForwarderSym(currentClass: Symbol, origSym: Symbol, newInfo: Type): Symbol = {
+  private def varargForwarderSym(currentClass: Symbol, origSym: Symbol): Symbol = {
     val forwSym = origSym.cloneSymbol(currentClass, VARARGS | SYNTHETIC | origSym.flags & ~DEFERRED, origSym.name.toTermName).withoutAnnotations
 
-    // we are using `origSym.info`, which contains the type *before* the transformation
-    // so we still see repeated parameter types (uncurry replaces them with Seq)
     def toArrayType(tp: Type, newParam: Symbol): Type = {
       val arg = elementType(SeqClass, tp)
       val elem = if (arg.typeSymbol.isTypeParameterOrSkolem && !(arg <:< AnyRefTpe)) {
@@ -146,6 +143,8 @@ trait UnCurry {
       arrayType(elem)
     }
 
+    // we are using `origSym.info`, which contains the type *before* the transformation
+    // so we still see repeated parameter types (uncurry replaces them with Seq)
     foreach2(forwSym.paramss, origSym.info.paramss){ (fsps, origPs) =>
       foreach2(fsps, origPs){ (p, sym) =>
         if (definitions.isRepeatedParamType(sym.tpe))

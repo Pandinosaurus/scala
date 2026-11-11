@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,6 +14,7 @@ package scala
 package reflect.internal.util
 
 import scala.reflect.ClassTag
+import scala.collection.AbstractIterator
 import scala.collection.{immutable, mutable}
 import scala.annotation.tailrec
 import mutable.ListBuffer
@@ -85,11 +86,11 @@ trait Collections {
   }
 
   final def collectFirst[A, B](as: List[A])(pf: PartialFunction[A, B]): Option[B] = {
-    @tailrec
-    def loop(rest: List[A]): Option[B] = rest match {
-      case Nil => None
-      case a :: as if pf.isDefinedAt(a) => Some(pf(a))
-      case a :: as => loop(as)
+    def loop(as: List[A]): Option[B] = as match {
+      case a :: as =>
+        if (pf.isDefinedAt(a)) Some(pf(a))
+        else loop(as)
+      case _ => None
     }
     loop(as)
   }
@@ -314,7 +315,7 @@ trait Collections {
   }
 
   final def mapFilter2[A, B, C](itA: Iterator[A], itB: Iterator[B])(f: (A, B) => Option[C]): Iterator[C] =
-    new Iterator[C] {
+    new AbstractIterator[C] {
       private[this] var head: Option[C] = None
       private[this] def advanceHead(): Unit =
         while (head.isEmpty && itA.hasNext && itB.hasNext) {

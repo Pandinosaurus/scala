@@ -1,4 +1,4 @@
-// scalac: -Xlint:multiarg-infix
+//> using options -Wmultiarg-infix
 //
 // lint multiarg infix syntax, e.g., vs += (1, 2, 3)
 // Since infix is encouraged by symbolic operator names, discourage defining def += (x: A, y: A, zs: A*)
@@ -81,3 +81,25 @@ trait WhyNamingIsHard {
 }
 
 class A(a: Int, b: Int)(c: Int = 1) // nowarn on <synthetic> def <init>$default$3(a: Int, b: Int): Int = 1
+
+case class Adder(c: Int) {
+  def +(i: Int, j: Int): Adder = new Adder(c + i*j)   // warn multiarg symbolic def
+}
+
+object Test extends App {
+  println {
+    var x = new Adder(42)
+    x = x + (3, 9)                 // warn multiarg infix apply
+    x
+  }
+  println {
+    var x = new Adder(42)
+    x.+=(3, 9)                     // nowarn
+    x
+  }
+  println {
+    var x = new Adder(42)
+    x += (3, 9)                    // warn multiarg infix assignment!
+    x
+  }
+}

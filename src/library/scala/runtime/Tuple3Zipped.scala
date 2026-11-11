@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -17,7 +17,7 @@ package runtime
 import scala.collection.{BuildFrom, IterableOps}
 import scala.language.implicitConversions
 
-/** See comment on ZippedIterable2
+/** See comment on `ZippedIterable2`
  *  @define Coll `ZippedIterable3`
  *  @define coll collection
  *  @define collectExample

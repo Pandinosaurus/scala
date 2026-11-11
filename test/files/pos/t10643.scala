@@ -1,5 +1,5 @@
 
-// scalac: -Yrangepos
+//
 
 trait AA
 trait BB

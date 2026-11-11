@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -12,9 +12,7 @@
 
 package scala.collection
 package mutable
-
 import java.util.Arrays
-
 import scala.collection.Stepper.EfficientSplit
 import scala.collection.convert.impl._
 import scala.reflect.ClassTag
@@ -44,21 +42,20 @@ sealed abstract class ArraySeq[T]
   override def iterableFactory: scala.collection.SeqFactory[ArraySeq] = ArraySeq.untagged
 
   override protected def fromSpecific(coll: scala.collection.IterableOnce[T]): ArraySeq[T] = {
-    val b = ArrayBuilder.make(elemTag).asInstanceOf[ArrayBuilder[T]]
-    val s = coll.knownSize
-    if(s > 0) b.sizeHint(s)
+    val b = ArrayBuilder.make(using elemTag).asInstanceOf[ArrayBuilder[T]]
+    b.sizeHint(coll, delta = 0)
     b ++= coll
     ArraySeq.make(b.result())
   }
-  override protected def newSpecificBuilder: Builder[T, ArraySeq[T]] = ArraySeq.newBuilder(elemTag).asInstanceOf[Builder[T, ArraySeq[T]]]
-  override def empty: ArraySeq[T] = ArraySeq.empty(elemTag.asInstanceOf[ClassTag[T]])
+  override protected def newSpecificBuilder: Builder[T, ArraySeq[T]] = ArraySeq.newBuilder(using elemTag).asInstanceOf[Builder[T, ArraySeq[T]]]
+  override def empty: ArraySeq[T] = ArraySeq.empty(using elemTag.asInstanceOf[ClassTag[T]])
 
   /** The tag of the element type. This does not have to be equal to the element type of this ArraySeq. A primitive
     * ArraySeq can be backed by an array of boxed values and a reference ArraySeq can be backed by an array of a supertype
     * or subtype of the element type. */
   def elemTag: ClassTag[_]
 
-  /** Update element at given index */
+  /** Updates element at given index */
   def update(@deprecatedName("idx", "2.13.0") index: Int, elem: T): Unit
 
   /** The underlying array. Its element type does not have to be equal to the element type of this ArraySeq. A primitive
@@ -112,7 +109,7 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
   def newBuilder[A : ClassTag]: Builder[A, ArraySeq[A]] = ArrayBuilder.make[A].mapResult(make)
 
   /**
-   * Wrap an existing `Array` into a `ArraySeq` of the proper primitive specialization type
+   * Wraps an existing `Array` into a `ArraySeq` of the proper primitive specialization type
    * without copying.
    *
    * Note that an array containing boxed primitives can be converted to a `ArraySeq` without
@@ -123,7 +120,7 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
    * `ArraySeq.make(a.asInstanceOf[Array[Int]])` does not work, it throws a `ClassCastException`
    * at runtime.
    */
-  def make[T](x: Array[T]): ArraySeq[T] = ((x.asInstanceOf[Array[_]]: @unchecked) match {
+  def make[T](x: Array[T]): ArraySeq[T] = ((x: @unchecked) match {
     case null              => null
     case x: Array[AnyRef]  => new ofRef[AnyRef](x)
     case x: Array[Int]     => new ofInt(x)
@@ -139,7 +136,7 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
 
   @SerialVersionUID(3L)
   final class ofRef[T <: AnyRef](val array: Array[T]) extends ArraySeq[T] {
-    def elemTag = ClassTag[T](array.getClass.getComponentType)
+    def elemTag: ClassTag[T] = ClassTag[T](array.getClass.getComponentType)
     def length: Int = array.length
     def apply(index: Int): T = array(index)
     def update(index: Int, elem: T): Unit = { array(index) = elem }
@@ -161,7 +158,8 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
 
   @SerialVersionUID(3L)
   final class ofByte(val array: Array[Byte]) extends ArraySeq[Byte] {
-    def elemTag = ClassTag.Byte
+    // Type erases to `ManifestFactory.ByteManifest`, but can't annotate that because it's not accessible
+    def elemTag: ClassTag.Byte.type = ClassTag.Byte
     def length: Int = array.length
     def apply(index: Int): Byte = array(index)
     def update(index: Int, elem: Byte): Unit = { array(index) = elem }
@@ -180,7 +178,8 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
 
   @SerialVersionUID(3L)
   final class ofShort(val array: Array[Short]) extends ArraySeq[Short] {
-    def elemTag = ClassTag.Short
+    // Type erases to `ManifestFactory.ShortManifest`, but can't annotate that because it's not accessible
+    def elemTag: ClassTag.Short.type = ClassTag.Short
     def length: Int = array.length
     def apply(index: Int): Short = array(index)
     def update(index: Int, elem: Short): Unit = { array(index) = elem }
@@ -199,7 +198,8 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
 
   @SerialVersionUID(3L)
   final class ofChar(val array: Array[Char]) extends ArraySeq[Char] {
-    def elemTag = ClassTag.Char
+    // Type erases to `ManifestFactory.CharManifest`, but can't annotate that because it's not accessible
+    def elemTag: ClassTag.Char.type = ClassTag.Char
     def length: Int = array.length
     def apply(index: Int): Char = array(index)
     def update(index: Int, elem: Char): Unit = { array(index) = elem }
@@ -215,7 +215,7 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
       else new WidenedCharArrayStepper(array, 0, array.length)
       ).asInstanceOf[S with EfficientSplit]
 
-    override def addString(sb: StringBuilder, start: String, sep: String, end: String): StringBuilder = {
+    override def addString(sb: StringBuilder, start: String, sep: String, end: String): sb.type = {
       val jsb = sb.underlying
       if (start.length != 0) jsb.append(start)
       val len = array.length
@@ -239,7 +239,8 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
 
   @SerialVersionUID(3L)
   final class ofInt(val array: Array[Int]) extends ArraySeq[Int] {
-    def elemTag = ClassTag.Int
+    // Type erases to `ManifestFactory.IntManifest`, but can't annotate that because it's not accessible
+    def elemTag: ClassTag.Int.type = ClassTag.Int
     def length: Int = array.length
     def apply(index: Int): Int = array(index)
     def update(index: Int, elem: Int): Unit = { array(index) = elem }
@@ -258,7 +259,8 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
 
   @SerialVersionUID(3L)
   final class ofLong(val array: Array[Long]) extends ArraySeq[Long] {
-    def elemTag = ClassTag.Long
+    // Type erases to `ManifestFactory.LongManifest`, but can't annotate that because it's not accessible
+    def elemTag: ClassTag.Long.type = ClassTag.Long
     def length: Int = array.length
     def apply(index: Int): Long = array(index)
     def update(index: Int, elem: Long): Unit = { array(index) = elem }
@@ -277,13 +279,20 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
 
   @SerialVersionUID(3L)
   final class ofFloat(val array: Array[Float]) extends ArraySeq[Float] {
-    def elemTag = ClassTag.Float
+    // Type erases to `ManifestFactory.FloatManifest`, but can't annotate that because it's not accessible
+    def elemTag: ClassTag.Float.type = ClassTag.Float
     def length: Int = array.length
     def apply(index: Int): Float = array(index)
     def update(index: Int, elem: Float): Unit = { array(index) = elem }
     override def hashCode = MurmurHash3.arraySeqHash(array)
     override def equals(that: Any) = that match {
-      case that: ofFloat => Arrays.equals(array, that.array)
+      case that: ofFloat =>
+        val thatArray = that.array
+        (array eq thatArray) || array.length == thatArray.length && {
+          var i = 0
+          while (i < array.length && array(i) == thatArray(i)) i += 1
+          i >= array.length
+        }
       case _ => super.equals(that)
     }
     override def iterator: Iterator[Float] = new ArrayOps.ArrayIterator[Float](array)
@@ -296,13 +305,20 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
 
   @SerialVersionUID(3L)
   final class ofDouble(val array: Array[Double]) extends ArraySeq[Double] {
-    def elemTag = ClassTag.Double
+    // Type erases to `ManifestFactory.DoubleManifest`, but can't annotate that because it's not accessible
+    def elemTag: ClassTag.Double.type = ClassTag.Double
     def length: Int = array.length
     def apply(index: Int): Double = array(index)
     def update(index: Int, elem: Double): Unit = { array(index) = elem }
     override def hashCode = MurmurHash3.arraySeqHash(array)
     override def equals(that: Any) = that match {
-      case that: ofDouble => Arrays.equals(array, that.array)
+      case that: ofDouble =>
+        val thatArray = that.array
+        (array eq thatArray) || array.length == thatArray.length && {
+          var i = 0
+          while (i < array.length && array(i) == thatArray(i)) i += 1
+          i >= array.length
+        }
       case _ => super.equals(that)
     }
     override def iterator: Iterator[Double] = new ArrayOps.ArrayIterator[Double](array)
@@ -315,7 +331,8 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
 
   @SerialVersionUID(3L)
   final class ofBoolean(val array: Array[Boolean]) extends ArraySeq[Boolean] {
-    def elemTag = ClassTag.Boolean
+    // Type erases to `ManifestFactory.BooleanManifest`, but can't annotate that because it's not accessible
+    def elemTag: ClassTag.Boolean.type = ClassTag.Boolean
     def length: Int = array.length
     def apply(index: Int): Boolean = array(index)
     def update(index: Int, elem: Boolean): Unit = { array(index) = elem }
@@ -331,7 +348,8 @@ object ArraySeq extends StrictOptimizedClassTagSeqFactory[ArraySeq] { self =>
 
   @SerialVersionUID(3L)
   final class ofUnit(val array: Array[Unit]) extends ArraySeq[Unit] {
-    def elemTag = ClassTag.Unit
+    // Type erases to `ManifestFactory.UnitManifest`, but can't annotate that because it's not accessible
+    def elemTag: ClassTag.Unit.type = ClassTag.Unit
     def length: Int = array.length
     def apply(index: Int): Unit = array(index)
     def update(index: Int, elem: Unit): Unit = { array(index) = elem }

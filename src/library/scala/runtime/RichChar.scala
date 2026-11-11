@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,8 +14,8 @@ package scala
 package runtime
 
 final class RichChar(val self: Char) extends AnyVal with IntegralProxy[Char] {
-  protected def num = scala.math.Numeric.CharIsIntegral
-  protected def ord = scala.math.Ordering.Char
+  protected def num: scala.math.Numeric.CharIsIntegral.type = scala.math.Numeric.CharIsIntegral
+  protected def ord: scala.math.Ordering.Char.type = scala.math.Ordering.Char
 
   override def doubleValue = self.toDouble
   override def floatValue  = self.toFloat

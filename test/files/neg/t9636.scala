@@ -1,4 +1,4 @@
-// scalac: -Xlint -Xfatal-warnings
+//> using options -Werror -Xlint
 //
 
 import java.io._

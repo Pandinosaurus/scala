@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -15,6 +15,7 @@ package scala.tools.nsc.interpreter
 import scala.language.implicitConversions
 
 import scala.collection.mutable
+import scala.reflect.internal.Precedence
 
 trait MemberHandlers {
   val intp: IMain
@@ -29,12 +30,12 @@ trait MemberHandlers {
   import ReplStrings.{string2codeQuoted, string2code, any2stringOf, quotedString}
 
   private def codegenln(leadingPlus: Boolean, xs: String*): String = codegen(leadingPlus, (xs ++ Array("\n")): _*)
-  private def codegenln(xs: String*): String = codegenln(true, xs: _*)
+  private def codegenln(xs: String*): String = codegenln(leadingPlus = true, xs: _*)
   private def codegen(leadingPlus: Boolean, xs: String*): String = {
     val front = if (leadingPlus) "+ " else ""
     front + (xs map string2codeQuoted mkString " + ")
   }
-  private implicit def name2string(name: Name) = name.toString
+  private implicit def name2string(name: Name): String = name.toString
 
   /** A traverser that finds all mentioned identifiers, i.e. things
    *  that need to be imported.  It might return extra names.
@@ -77,7 +78,9 @@ trait MemberHandlers {
     case member: ModuleDef                     => new ModuleHandler(member)
     case member: ClassDef                      => new ClassHandler(member)
     case member: TypeDef                       => new TypeAliasHandler(member)
-    case member: Assign                        => new AssignHandler(member)
+    case member: Assign                        => AssignHandler(member)
+    case member @ Apply(Select(_, op), _)
+    if Precedence(op.decoded).level == 0       => AssignHandler(member)
     case member: Import                        => new ImportHandler(member.duplicate) // duplicate because the same tree will be type checked (which loses info)
     case DocDef(_, documented)                 => chooseHandler(documented)
     case member                                => new GenericHandler(member)
@@ -175,9 +178,16 @@ trait MemberHandlers {
     def notification(req: Request) = s"def ${req.defTypeOf(name)}"
   }
 
-  class AssignHandler(member: Assign) extends MemberHandler(member) {
+  class AssignHandler private (member: Tree, lhs: Tree) extends MemberHandler(member) {
     override def resultExtractionCode(req: Request) =
-      codegenln(s"// mutated ${member.lhs}")
+      codegenln(s"// mutated $lhs")
+  }
+  object AssignHandler {
+    def apply(member: Assign) = new AssignHandler(member, member.lhs)
+    def apply(member: Apply) = member match {
+      case Apply(Select(qual, op), _) if Precedence(op.decoded).level == 0 => new AssignHandler(member, qual)
+      case _ => new GenericHandler(member)
+    }
   }
 
   class ModuleHandler(module: ModuleDef) extends MemberDefHandler(module) {

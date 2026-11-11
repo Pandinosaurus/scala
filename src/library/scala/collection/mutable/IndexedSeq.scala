@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -42,7 +42,7 @@ trait IndexedSeqOps[A, +CC[_], +C <: AnyRef]
     this
   }
 
-  /** Sorts this $coll in place according to an Ordering.
+  /** Sorts this $coll in place according to an `Ordering`.
     *
     * @see [[scala.collection.SeqOps.sorted]]
     * @param  ord the ordering to be used to compare elements.

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -38,6 +38,14 @@ object ReflectUtil {
       .tap { f =>
         if ((f.getModifiers & Modifier.FINAL) != 0)
           modsField.setInt(f, f.getModifiers() & ~Modifier.FINAL)
+        if ((f.getModifiers & Modifier.PUBLIC) == 0)
+          f.setAccessible(true)
+      }
+
+  def getFinalFieldAccessible[T: ClassTag](n: String): Field =
+    classTag[T]
+      .runtimeClass.getDeclaredField(n)
+      .tap { f =>
         if ((f.getModifiers & Modifier.PUBLIC) == 0)
           f.setAccessible(true)
       }

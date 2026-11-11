@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,6 +13,7 @@
 package scala.tools.nsc
 package util
 
+import scala.collection.mutable.ListBuffer
 import scala.reflect.internal.Chars._
 
 trait CharArrayReaderData {
@@ -41,6 +42,8 @@ abstract class CharArrayReader extends CharArrayReaderData { self =>
 
   val buf: Array[Char]
 
+  val bidiChars: ListBuffer[(Int, Int)] = ListBuffer.empty
+
   /** Advance one character; reducing CR;LF pairs to just LF */
   final def nextChar(): Unit = {
     if (charOffset >= buf.length) {
@@ -49,6 +52,8 @@ abstract class CharArrayReader extends CharArrayReaderData { self =>
       val c = buf(charOffset)
       ch = c
       charOffset += 1
+      if (isBiDiCharacter(ch))
+        bidiChars.addOne((ch, charOffset))
       if (ch < ' ') {
         skipCR()
         potentialLineEnd()
@@ -67,6 +72,8 @@ abstract class CharArrayReader extends CharArrayReaderData { self =>
       val c = buf(charOffset)
       ch = c
       charOffset += 1
+      if (isBiDiCharacter(ch))
+        bidiChars.addOne((ch, charOffset))
     }
   }
 

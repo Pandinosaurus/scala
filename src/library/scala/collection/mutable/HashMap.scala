@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -20,7 +20,7 @@ import scala.util.hashing.MurmurHash3
 
 /** This class implements mutable maps using a hashtable.
   *
-  *  @see [[https://docs.scala-lang.org/overviews/collections/concrete-mutable-collection-classes.html#hash-tables "Scala's Collection Library overview"]]
+  *  @see [[https://docs.scala-lang.org/overviews/collections-2.13/concrete-mutable-collection-classes.html#hash-tables "Scala's Collection Library overview"]]
   *  section on `Hash Tables` for more information.
   *
   *  @tparam K    the type of the keys contained in this hash map.
@@ -95,7 +95,7 @@ class HashMap[K, V](initialCapacity: Int, loadFactor: Double)
   }
 
   override def addAll(xs: IterableOnce[(K, V)]): this.type = {
-    sizeHint(xs.knownSize)
+    sizeHint(xs)
 
     xs match {
       case hm: immutable.HashMap[K, V] =>
@@ -106,6 +106,13 @@ class HashMap[K, V](initialCapacity: Int, loadFactor: Double)
         while (iter.hasNext) {
           val next = iter.next()
           put0(next.key, next.value, next.hash, getOld = false)
+        }
+        this
+      case lhm: mutable.LinkedHashMap[K, V] =>
+        val iter = lhm.entryIterator
+        while (iter.hasNext) {
+          val entry = iter.next()
+          put0(entry.key, entry.value, entry.hash, getOld = false)
         }
         this
       case thatMap: Map[K, V] =>
@@ -167,7 +174,7 @@ class HashMap[K, V](initialCapacity: Int, loadFactor: Double)
               growTable(table.length * 2)
               index(hash)
             } else indexedHash
-          put0(key, value, false, hash, newIndexedHash)
+          put0(key, value, getOld = false, hash, newIndexedHash)
 
         case (Some(_), Some(newValue)) => foundNode.value = newValue
       }
@@ -195,6 +202,14 @@ class HashMap[K, V](initialCapacity: Int, loadFactor: Double)
           if (size == 0) return this
         }
         this
+      case lhs: mutable.LinkedHashSet[K] =>
+        val iter = lhs.entryIterator
+        while (iter.hasNext) {
+          val next = iter.next()
+          remove0(next.key, next.hash)
+          if (size == 0) return this
+        }
+        this
       case _ => super.subtractAll(xs)
     }
   }
@@ -204,7 +219,7 @@ class HashMap[K, V](initialCapacity: Int, loadFactor: Double)
     * @param key the key to add
     * @param value the value to add
     * @param hash the **improved** hashcode of `key` (see computeHash)
-    * @param getOld if true, then the previous value for `key` will be returned, otherwise, false
+    * @param getOld if `true`, then the previous value for `key` will be returned, otherwise `false`
     */
   private[this] def put0(key: K, value: V, hash: Int, getOld: Boolean): Some[V] = {
     if(contentSize + 1 >= threshold) growTable(table.length * 2)
@@ -455,13 +470,13 @@ class HashMap[K, V](initialCapacity: Int, loadFactor: Double)
         if(contentSize + 1 >= threshold) growTable(table.length * 2)
         // Avoid recomputing index if the `defaultValue()` or new element hasn't triggered a table resize.
         val newIdx = if (table0 eq table) idx else index(hash)
-        put0(key, default, false, hash, newIdx)
+        put0(key, default, getOld = false, hash, newIdx)
         default
       }
     }
   }
 
-  override def put(key: K, value: V): Option[V] = put0(key, value, true) match {
+  override def put(key: K, value: V): Option[V] = put0(key, value, getOld = true) match {
     case null => None
     case sm => sm
   }
@@ -471,9 +486,9 @@ class HashMap[K, V](initialCapacity: Int, loadFactor: Double)
     case nd => Some(nd.value)
   }
 
-  override def update(key: K, value: V): Unit = put0(key, value, false)
+  override def update(key: K, value: V): Unit = put0(key, value, getOld = false)
 
-  def addOne(elem: (K, V)): this.type = { put0(elem._1, elem._2, false); this }
+  def addOne(elem: (K, V)): this.type = { put0(elem._1, elem._2, getOld = false); this }
 
   def subtractOne(elem: K): this.type = { remove0(elem); this }
 

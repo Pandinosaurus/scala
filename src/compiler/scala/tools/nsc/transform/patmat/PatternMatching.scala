@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,9 +13,10 @@
 package scala.tools.nsc.transform.patmat
 
 import scala.annotation.tailrec
+import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
 import scala.reflect.internal.{Mode, Types}
-import scala.reflect.internal.util.Statistics
+import scala.reflect.internal.util.{SourceFile, Statistics}
 import scala.tools.nsc.Global
 import scala.tools.nsc.ast
 import scala.tools.nsc.transform.{Transform, TypingTransformers}
@@ -58,10 +59,31 @@ trait PatternMatching extends Transform
 
   val phaseName: String = "patmat"
 
+  /** Symbols to force for determining children of sealed Java classes. */
+  val javaClassesByUnit = perRunCaches.newMap[SourceFile, mutable.Set[Symbol]]()
+
   def newTransformer(unit: CompilationUnit): AstTransformer = new MatchTransformer(unit)
 
   class MatchTransformer(unit: CompilationUnit) extends TypingTransformer(unit) {
+    private var inForceDesugar = false
+
     override def transform(tree: Tree): Tree = tree match {
+      case dd: DefDef if dd.hasAttachment[ForceMatchDesugar.type] || dd.symbol.hasAttachment[ForceMatchDesugar.type] =>
+        val wasInForceDesugar = inForceDesugar
+        try {
+          inForceDesugar = true
+          super.transform(dd)
+        } finally
+          inForceDesugar = wasInForceDesugar
+
+      case CaseDef(UnApply(Apply(Select(qual, nme.unapply), Ident(nme.SELECTOR_DUMMY) :: Nil), (bind@Bind(name, Ident(nme.WILDCARD))) :: Nil), guard, body)
+        if guard.isEmpty && qual.symbol == definitions.NonFatalModule =>
+        transform(treeCopy.CaseDef(
+          tree,
+          treeCopy.Bind(bind, name, Typed(Ident(nme.WILDCARD), TypeTree(definitions.ThrowableTpe)).setType(definitions.ThrowableTpe)),
+          localTyper.typed(atPos(tree.pos)(Apply(gen.mkAttributedRef(definitions.NonFatal_apply), List(Ident(bind.symbol))))),
+          body))
+
       case Match(sel, cases) =>
         val origTp = tree.tpe
 
@@ -72,16 +94,16 @@ trait PatternMatching extends Transform
           // but for the rest of us pass in top as the expected type to avoid waste.
           val pt = if (origTp <:< definitions.AnyTpe) definitions.AnyTpe else WildcardType
           localTyper.typed(translated, pt) match {
-            case b @ Block(stats, m: Match) =>
+            case b @ Block(_, m: Match) =>
               b.setType(origTp)
               m.setType(origTp)
               b
-            case tree => tree setType origTp
+            case t => t.setType(origTp)
           }
         } catch {
-          case x: (Types#TypeError) =>
+          case x: Types#TypeError =>
             // TODO: this should never happen; error should've been reported during type checking
-            reporter.error(tree.pos, "error during expansion of this match (this is a scalac bug).\nThe underlying error was: "+ x.msg)
+            reporter.error(tree.pos, s"error during expansion of this match (this is a scalac bug).\nThe underlying error was: ${x.msg}")
             translated
         }
       case Try(block, catches, finalizer) =>
@@ -91,16 +113,17 @@ trait PatternMatching extends Transform
     }
 
     def translator(selectorPos: Position): MatchTranslator with CodegenCore = {
-      new OptimizingMatchTranslator(localTyper, selectorPos)
+      new OptimizingMatchTranslator(localTyper, selectorPos, inForceDesugar)
     }
 
   }
 
 
-  class OptimizingMatchTranslator(val typer: analyzer.Typer, val selectorPos: Position) extends MatchTranslator
-                                                             with MatchOptimizer
-                                                             with MatchAnalyzer
-                                                             with Solver
+  class OptimizingMatchTranslator(val typer: analyzer.Typer, val selectorPos: Position, val inForceDesugar: Boolean)
+    extends MatchTranslator
+      with MatchOptimizer
+      with MatchAnalyzer
+      with Solver
 }
 
 trait Debugging {
@@ -162,7 +185,7 @@ trait Interface extends ast.TreeDSL {
         // according to -Ystatistics 10% of translateMatch's time is spent in this method...
         // since about half of the typedSubst's end up being no-ops, the check below shaves off 5% of the time spent in typedSubst
 
-        val checkType = new TypeCollector[Boolean](false) {
+        val checkType = new TypeCollector[Boolean](initial = false) {
           override def apply(tp: Type): Unit =
             if (!result) {
               tp match {

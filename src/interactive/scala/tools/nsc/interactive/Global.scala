@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -21,13 +21,12 @@ import scala.collection.mutable
 import scala.collection.mutable.{HashSet, LinkedHashMap}
 import scala.jdk.javaapi.CollectionConverters
 import scala.language.implicitConversions
-import scala.reflect.internal.Chars.isIdentifierStart
 import scala.reflect.internal.util.SourceFile
 import scala.tools.nsc.io.AbstractFile
 import scala.tools.nsc.reporters.Reporter
 import scala.tools.nsc.symtab.Flags.{ACCESSOR, PARAMACCESSOR}
 import scala.tools.nsc.symtab._
-import scala.tools.nsc.typechecker.{Analyzer, Typers}
+import scala.tools.nsc.typechecker.{AbstractAnalyzer, Analyzer, Typers}
 import scala.util.control.Breaks._
 import scala.util.control.ControlThrowable
 
@@ -35,12 +34,15 @@ import scala.util.control.ControlThrowable
  * This trait allows the IDE to have an instance of the PC that
  * does not clear the comments table at every new typer run (those
  * being many and close between in this context).
+ *
+ * Expanded comments are still dropped: they are derived from raw comments,
+ * which are replaced when a source is reloaded.
  */
 
 trait CommentPreservingTypers extends Typers {
-  self: Analyzer =>
+  self: AbstractAnalyzer =>
 
-  override def resetDocComments() = {}
+  override def resetDocComments() = global.docCommentsSupport.cookedDocComments.clear()
 }
 
 trait InteractiveAnalyzer extends Analyzer {
@@ -51,6 +53,7 @@ trait InteractiveAnalyzer extends Analyzer {
   override def newNamer(context: Context): InteractiveNamer = new Namer(context) with InteractiveNamer
 
   trait InteractiveTyper extends Typer {
+    override def isInteractive = true
     override def canAdaptConstantTypeToLiteral = false
     override def canTranslateEmptyListToNil    = false
     override def missingSelectErrorTree(tree: Tree, qual: Tree, name: Name): Tree = tree match {
@@ -85,14 +88,18 @@ trait InteractiveAnalyzer extends Analyzer {
         for (defAtt <- sym.attachments.get[DefaultsOfLocalMethodAttachment])
           defAtt.defaultGetters foreach enterIfNotThere
       } else if (sym != null && sym.isClass && sym.isImplicit) {
-        val owningInfo = sym.owner.info
-        val existingDerivedSym = owningInfo.decl(sym.name.toTermName).filter(sym => sym.isSynthetic && sym.isMethod)
-        existingDerivedSym.alternatives foreach (owningInfo.decls.unlink)
-        val defTree = tree match {
+        val classDef = (tree match {
           case dd: DocDef => dd.definition // See scala/bug#9011, Scala IDE's presentation compiler incorporates ScaladocGlobal with InteractiveGlobal, so we have to unwrap DocDefs.
           case _ => tree
+        }).asInstanceOf[ClassDef]
+        // Keep the factory method, implicits cached during an earlier type check of this run refer to it.
+        sym.owner.info.decl(sym.name.toTermName).filter(m => m.isSynthetic && m.isMethod) match {
+          case NoSymbol => enterImplicitWrapper(classDef)
+          case factory  =>
+            val methDef = implicitWrapperDef(classDef).setSymbol(factory)
+            context.unit.synthetics(factory) = methDef
+            factory.setInfo(implicitFactoryMethodCompleter(methDef, sym))
         }
-        enterImplicitWrapper(defTree.asInstanceOf[ClassDef])
       }
       super.enterExistingSym(sym, tree)
     }
@@ -307,7 +314,7 @@ class Global(settings: Settings, _reporter: Reporter, projectName: String = "") 
 
   protected[interactive] var minRunId = 1
 
-  private[interactive] var interruptsEnabled = true
+  override var interruptsEnabled = true
 
   private val NoResponse: Response[_] = new Response[Any]
 
@@ -385,6 +392,16 @@ class Global(settings: Settings, _reporter: Reporter, projectName: String = "") 
    */
   override def registerTopLevelSym(sym: Symbol): Unit = { currentTopLevelSyms += sym }
 
+  /** A targeted type check stops early, before the `@nowarn` annotations in the rest of the unit are known.
+   *  Its warnings stay suspended until a full type check of the unit reports them.
+   */
+  override protected def PerRunReporting: PerRunReporting = new PerRunReporting {
+    override def reportSuspendedMessages(unit: CompilationUnit): Unit = unit match {
+      case u: RichCompilationUnit if u.targetPos != NoPosition =>
+      case _ => super.reportSuspendedMessages(unit)
+    }
+  }
+
   protected type SymbolLoadersInInteractive = GlobalSymbolLoaders {
     val global: Global.this.type
     val platform: Global.this.platform.type
@@ -403,8 +420,7 @@ class Global(settings: Settings, _reporter: Reporter, projectName: String = "") 
       case unit: RichCompilationUnit => unit.isParsed
       case _                         => true
     })
-    if (isPastNamer) super.openPackageModule(pkgClass, true)
-    else analyzer.packageObjects.deferredOpen.add(pkgClass)
+    super.openPackageModule(pkgClass, force = isPastNamer)
   }
 
   // ----------------- Polling ---------------------------------------
@@ -586,7 +602,7 @@ class Global(settings: Settings, _reporter: Reporter, projectName: String = "") 
     for (s <- allSources; if !ignoredFiles(s.file); unit <- getUnit(s)) {
       try {
         if (!unit.isUpToDate)
-          if (unit.problems.isEmpty || !settings.YpresentationStrict)
+          if (unit.problems.isEmpty || !settings.YpresentationStrict.value)
             typeCheck(unit)
           else debugLog("%s has syntax errors. Skipped typechecking".format(unit))
         else debugLog("already up to date: "+unit)
@@ -941,7 +957,7 @@ class Global(settings: Settings, _reporter: Reporter, projectName: String = "") 
   private def forceDocComment(sym: Symbol, unit: RichCompilationUnit): Unit = {
     unit.body foreachPartial {
       case DocDef(comment, defn) if defn.symbol == sym =>
-        fillDocComment(defn.symbol, comment)
+        docCommentsSupport.fillDocComment(defn.symbol, comment)
         EmptyTree
       case _: ValOrDefDef =>
         EmptyTree
@@ -962,7 +978,7 @@ class Global(settings: Settings, _reporter: Reporter, projectName: String = "") 
         if (mirror eq NoSymbol)
           ("", "", NoPosition)
         else {
-          (expandedDocComment(mirror, site), rawDocComment(mirror), docCommentPos(mirror))
+          (docCommentsSupport.expandedDocComment(mirror, site), docCommentsSupport.rawDocComment(mirror), docCommentsSupport.docCommentPos(mirror))
         }
       }
     }
@@ -975,16 +991,15 @@ class Global(settings: Settings, _reporter: Reporter, projectName: String = "") 
       singleType(NoPrefix, tree.symbol)
     case Select(qual, _) if treeInfo.admitsTypeSelection(tree) =>
       singleType(qual.tpe, tree.symbol)
-    case Import(expr, selectors) =>
+    case Import(_, _) =>
       tree.symbol.info match {
         case ImportType(expr) => expr match {
-          case s@Select(qual, name) if treeInfo.admitsTypeSelection(expr) => singleType(qual.tpe, s.symbol)
-          case i : Ident => i.tpe
+          case Select(qual, _) if treeInfo.admitsTypeSelection(expr) => singleType(qual.tpe, expr.symbol)
+          case _: Ident => expr.tpe
           case _ => tree.tpe
         }
         case _ => tree.tpe
       }
-
     case _ => tree.tpe
   }
 
@@ -995,6 +1010,7 @@ class Global(settings: Settings, _reporter: Reporter, projectName: String = "") 
     respond(response) { scopeMemberFlatten(scopeMembers(pos)) }
   }
 
+  @nowarn("msg=inheritance from class LinkedHashMap")
   private class Members[M <: Member] extends LinkedHashMap[Name, Set[M]] {
     override def default(key: Name) = Set()
 
@@ -1008,9 +1024,16 @@ class Global(settings: Settings, _reporter: Reporter, projectName: String = "") 
       (!implicitlyAdded || m.implicitlyAdded)
 
     def add(sym: Symbol, pre: Type, implicitlyAdded: Boolean)(toMember: (Symbol, Type) => M): Unit = {
+      // cannot exclude `isSynthetic` because, eg, synthetic case class members
+      def exclude =
+        sym.isError || !sym.hasRawInfo ||
+          sym.isArtifact || sym.isDefaultGetter || sym.isMixinConstructor ||
+          // Exclude top-level class symbols with a `$`. The compiler creates a symbol for every `.class` file, but there
+          // are many that we don't want in completions (inner / module / specialized classes). See scala/scala-dev#905.
+          sym.isTopLevel && !sym.rawInfo.isComplete && sym.name.decodedName.containsChar('$')
       if ((sym.isGetter || sym.isSetter) && sym.accessed != NoSymbol) {
         add(sym.accessed, pre, implicitlyAdded)(toMember)
-      } else if (!sym.name.decodedName.containsName("$") && !sym.isError && !sym.isArtifact && sym.hasRawInfo) {
+      } else if (!exclude) {
         val symtpe = pre.memberType(sym) onTypeError ErrorType
         matching(sym, symtpe, this(sym.name)) match {
           case Some(m) =>
@@ -1190,7 +1213,7 @@ class Global(settings: Settings, _reporter: Reporter, projectName: String = "") 
       results.filter { (member: Member) =>
         val symbol = member.sym
         def isStable = member.tpe.isStable || member.sym.isStable || member.sym.getterIn(member.sym.owner).isStable
-        def isJunk = !symbol.exists || symbol.name.isEmpty || !isIdentifierStart(member.sym.name.charAt(0)) // e.g. <byname>
+        def isJunk = !symbol.exists || symbol.name.isEmpty || symbol.encodedName.charAt(0) == '<' // e.g. <byname>
         def nameTypeOk: Boolean = {
           forImport || // Completing an import: keep terms and types.
             symbol.name.isTermName == name.isTermName || // Keep names of the same type
@@ -1200,8 +1223,8 @@ class Global(settings: Settings, _reporter: Reporter, projectName: String = "") 
         def aliasTypeOk: Boolean = {
           matcher(member.aliasInfo.map(_.sym.name).getOrElse(NoSymbol.name)) && !forImport && symbol.name.isTermName == name.isTermName
         }
-        
-        !isJunk && member.accessible && !symbol.isConstructor && (name.isEmpty || (matcher(member.sym.name) || aliasTypeOk)
+
+        !isJunk && member.accessible && (name.isEmpty || (matcher(member.sym.name) || aliasTypeOk)
           && nameTypeOk)
 
       }
@@ -1269,20 +1292,16 @@ class Global(settings: Settings, _reporter: Reporter, projectName: String = "") 
             typeCompletions(imp, qual, selector.namePos, selector.name)
         }
       case sel@Select(qual, name) =>
-        val qualPos = qual.pos
-        val effectiveQualEnd = if (qualPos.isRange) qualPos.end else qualPos.point - 1
-        def fallback = {
-          effectiveQualEnd + 2
-        }
-        val source = pos.source
-
-        val nameStart: Int = (focus1.pos.end - 1 to effectiveQualEnd by -1).find(p =>
-          source.identifier(source.position(p)).exists(_.length == 0)
-        ).map(_ + 1).getOrElse(fallback)
+        val rawNameStart: Int = sel.pos.point
+        val hasBackTick = pos.source.content.lift(rawNameStart).contains('`')
+        val nameStart = if (hasBackTick) rawNameStart + 1 else rawNameStart
         typeCompletions(sel, qual, nameStart, name)
-      case Ident(name) =>
+      case ident@Ident(name) =>
         val allMembers = scopeMembers(pos)
-        val positionDelta: Int = pos.start - focus1.pos.start
+        val rawNameStart: Int = ident.pos.point
+        val hasBackTick = pos.source.content.lift(rawNameStart).contains('`')
+        val nameStart = if (hasBackTick) rawNameStart + 1 else rawNameStart
+        val positionDelta: Int = pos.start - nameStart
         val subName = name.subName(0, positionDelta)
         CompletionResult.ScopeMembers(positionDelta, scopeMemberFlatten(allMembers), subName, forImport = false)
       case _ =>

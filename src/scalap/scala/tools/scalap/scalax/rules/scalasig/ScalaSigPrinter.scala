@@ -1,7 +1,7 @@
 /*
  * Scala classfile decoder (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -44,7 +44,7 @@ class ScalaSigPrinter(stream: PrintStream, printPrivates: Boolean) {
             !(symbol.isPrivate && !printPrivates)) {
       def indent(): Unit = {for (i <- 1 to level) print("  ")}
 
-      printSymbolAttributes(symbol, true, indent())
+      printSymbolAttributes(symbol, onNewLine = true, indent())
       symbol match {
         case o: ObjectSymbol =>
           if (!isCaseClassObject(o)) {
@@ -157,7 +157,7 @@ class ScalaSigPrinter(stream: PrintStream, printPrivates: Boolean) {
         val baos = new ByteArrayOutputStream
         val stream = new PrintStream(baos)
         val printer = new ScalaSigPrinter(stream, printPrivates)
-        printer.printMethodType(m.infoType, false)(())
+        printer.printMethodType(m.infoType, printResult = false)(())
         baos.toString
       case _ =>
         ""
@@ -194,7 +194,7 @@ class ScalaSigPrinter(stream: PrintStream, printPrivates: Boolean) {
     def _pmt(mt: MethodType) = {
 
       val paramEntries = mt.paramSymbols.map({
-        case ms: MethodSymbol => ms.name + ": " + toString(ms.infoType)(TypeFlags(true))
+        case ms: MethodSymbol => ms.name + ": " + toString(ms.infoType)(TypeFlags(printRep = true))
         case _ => "^___^"
       })
       val implicitWord = mt.paramSymbols.headOption match {
@@ -207,7 +207,7 @@ class ScalaSigPrinter(stream: PrintStream, printPrivates: Boolean) {
 
       // Print result type
       mt.resultType match {
-        case mt: MethodType => printMethodType(mt, printResult)({})
+        case res: MethodType => printMethodType(res, printResult)(())
         case x => if (printResult) {
           print(": ")
           printType(x)
@@ -250,11 +250,11 @@ class ScalaSigPrinter(stream: PrintStream, printPrivates: Boolean) {
     n match {
       case CONSTRUCTOR_NAME =>
         print("this")
-        printMethodType(m.infoType, false)(cont())
+        printMethodType(m.infoType, printResult = false)(cont())
       case name =>
         val nn = processName(name)
         print(nn)
-        printMethodType(m.infoType, true)(
+        printMethodType(m.infoType, printResult = true)(
           {if (!m.isDeferred) print(" = { /* compiled code */ }" /* Print body only for non-abstract methods */ )}
           )
     }
@@ -313,7 +313,7 @@ class ScalaSigPrinter(stream: PrintStream, printPrivates: Boolean) {
     case _ => value.toString
   }
 
-  implicit object _tf extends TypeFlags(false)
+  implicit object _tf extends TypeFlags(printRep = false)
 
   def printType(sym: SymbolInfoSymbol)(implicit flags: TypeFlags): Unit = printType(sym.infoType)(flags)
 

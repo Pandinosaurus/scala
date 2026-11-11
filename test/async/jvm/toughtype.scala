@@ -1,4 +1,4 @@
-// scalac: -Xasync
+//> using options -Xasync
 
 object Test extends scala.tools.partest.JUnitTest(classOf[scala.async.run.toughtype.ToughTypeSpec])
 
@@ -34,7 +34,7 @@ package scala.async.run.toughtype {
 
   class ToughTypeSpec {
 
-    @Test def `propogates tough types`(): Unit = {
+    @Test def `propagates tough types`(): Unit = {
       val fut = ToughTypeObject.m2
       val res: (List[_], scala.async.run.toughtype.ToughTypeObject.Inner) = Await.result(fut, 2 seconds)
       assertEquals(Nil, res._1)
@@ -199,7 +199,7 @@ package scala.async.run.toughtype {
       }
 
       object FunDep {
-        implicit def `Something to do with List`[W, S, R](implicit funDep: FunDep[W, S, R]) =
+        implicit def `Something to do with List`[W, S, R](implicit funDep: FunDep[W, S, R]): FunDep[W,List[S],W] =
           new FunDep[W, List[S], W] {
             def method(w: W, l: List[S]) = async {
               val it = l.iterator

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,7 +13,7 @@
 package scala.tools.partest
 
 import scala.reflect.internal.util.{BatchSourceFile, SourceFile}
-import scala.tools.cmd.CommandLineParser
+import scala.sys.process.{Parser => CommandLineParser}
 import scala.tools.nsc._
 import scala.tools.nsc.reporters.{ConsoleReporter, Reporter}
 import scala.tools.nsc.settings.ScalaVersion
@@ -44,21 +44,27 @@ abstract class DirectTest {
 
   protected def pathOf(locations: String*) = locations.mkString(sys.props("path.separator"))
 
+  // convenient for test classes not in a subpackage of scala
+  final protected def tokenize(line: String): List[String] = CommandLineParser.tokenize(line)
+
   // override to add additional settings besides -d testOutput.path
   // default is -usejavacp
   def extraSettings: String = "-usejavacp"
   // a default Settings object using only extraSettings
-  def settings: Settings = newSettings(CommandLineParser.tokenize(extraSettings))
+  def settings: Settings = newSettings(tokenize(extraSettings))
   // settings factory using given args and also debug settings
-  def newSettings(args: List[String]) = (new Settings).tap { s =>
-    val allArgs = args ++ CommandLineParser.tokenize(debugSettings)
+  def newSettings(args: List[String]): Settings = newBaseSettings().tap { s =>
+    val allArgs = debugSettings.pipe(db => if (db.isEmpty) args else args ++ tokenize(db))
     log(s"newSettings: allArgs = $allArgs")
     val (success, residual) = s.processArguments(allArgs, processAll = false)
     assert(success && residual.isEmpty, s"Bad settings [${args.mkString(",")}], residual [${residual.mkString(",")}]")
   }
+  // scaladoc has custom settings
+  def newBaseSettings(): Settings = new Settings
+
   // new compiler using given ad hoc args, -d and extraSettings
   def newCompiler(args: String*): Global = {
-    val settings = newSettings(CommandLineParser.tokenize(s"""-d "${testOutput.path}" ${extraSettings}""") ++ args.toList)
+    val settings = newSettings(tokenize(s"""-d "${testOutput.path}" ${extraSettings}""") ++ args.toList)
     newCompiler(settings)
   }
 
@@ -115,7 +121,7 @@ abstract class DirectTest {
     catch {
       case t: Exception =>
         println(t.getMessage)
-        t.printStackTrace
+        t.printStackTrace()
         sys.exit(1)
     }
 

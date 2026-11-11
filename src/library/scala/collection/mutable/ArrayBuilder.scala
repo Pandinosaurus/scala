@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,6 +13,7 @@
 package scala.collection
 package mutable
 
+import scala.collection.mutable.ArrayBuffer.resizeUp
 import scala.reflect.ClassTag
 
 /** A builder class for arrays.
@@ -24,36 +25,43 @@ sealed abstract class ArrayBuilder[T]
   extends ReusableBuilder[T, Array[T]]
     with Serializable {
   protected[this] var capacity: Int = 0
-  protected[this] def elems: Array[T]
+  protected[this] def elems: Array[T] // may not be allocated at size = capacity = 0
   protected var size: Int = 0
 
+  /** Current number of elements. */
   def length: Int = size
 
+  /** Current number of elements. */
   override def knownSize: Int = size
 
   protected[this] final def ensureSize(size: Int): Unit = {
-    if (capacity < size || capacity == 0) {
-      var newsize = if (capacity == 0) 16 else capacity * 2
-      while (newsize < size) newsize *= 2
-      resize(newsize)
-    }
+    val newLen = resizeUp(capacity, size)
+    if (newLen > 0) resize(newLen)
   }
 
-  override final def sizeHint(size: Int): Unit =
-    if (capacity < size) resize(size)
+  override final def sizeHint(size: Int): Unit = if (capacity < size) resize(size)
 
   def clear(): Unit = size = 0
 
   protected[this] def resize(size: Int): Unit
 
-  /** Add all elements of an array */
+  /** Adds all elements of an array. */
   def addAll(xs: Array[_ <: T]): this.type = addAll(xs, 0, xs.length)
 
-  /** Add a slice of an array */
+  /** Adds a slice of an array. */
   def addAll(xs: Array[_ <: T], offset: Int, length: Int): this.type = {
-    ensureSize(this.size + length)
-    Array.copy(xs, offset, elems, this.size, length)
-    size += length
+    val offset1 = offset.max(0)
+    val length1 = length.max(0)
+    val effectiveLength = length1.min(xs.length - offset1)
+    doAddAll(xs, offset1, effectiveLength)
+  }
+
+  private def doAddAll(xs: Array[_ <: T], offset: Int, length: Int): this.type = {
+    if (length > 0) {
+      ensureSize(this.size + length)
+      Array.copy(xs, offset, elems, this.size, length)
+      size += length
+    }
     this
   }
 
@@ -61,7 +69,8 @@ sealed abstract class ArrayBuilder[T]
     val k = xs.knownSize
     if (k > 0) {
       ensureSize(this.size + k)
-      IterableOnce.copyElemsToArray(xs, elems, this.size)
+      val actual = IterableOnce.copyElemsToArray(xs, elems, this.size)
+      if (actual != k) throw new IllegalStateException(s"Copied $actual of $k")
       size += k
     } else if (k < 0) super.addAll(xs)
     this
@@ -137,11 +146,6 @@ object ArrayBuilder {
       if(elems ne null) java.util.Arrays.fill(elems.asInstanceOf[Array[AnyRef]], null)
     }
 
-    override def equals(other: Any): Boolean = other match {
-      case x: ofRef[_] => (size == x.size) && (elems == x.elems)
-      case _ => false
-    }
-
     override def toString = "ArrayBuilder.ofRef"
   }
 
@@ -177,11 +181,6 @@ object ArrayBuilder {
         res
       }
       else mkArray(size)
-    }
-
-    override def equals(other: Any): Boolean = other match {
-      case x: ofByte => (size == x.size) && (elems == x.elems)
-      case _ => false
     }
 
     override def toString = "ArrayBuilder.ofByte"
@@ -221,11 +220,6 @@ object ArrayBuilder {
       else mkArray(size)
     }
 
-    override def equals(other: Any): Boolean = other match {
-      case x: ofShort => (size == x.size) && (elems == x.elems)
-      case _ => false
-    }
-
     override def toString = "ArrayBuilder.ofShort"
   }
 
@@ -261,11 +255,6 @@ object ArrayBuilder {
         res
       }
       else mkArray(size)
-    }
-
-    override def equals(other: Any): Boolean = other match {
-      case x: ofChar => (size == x.size) && (elems == x.elems)
-      case _ => false
     }
 
     override def toString = "ArrayBuilder.ofChar"
@@ -305,11 +294,6 @@ object ArrayBuilder {
       else mkArray(size)
     }
 
-    override def equals(other: Any): Boolean = other match {
-      case x: ofInt => (size == x.size) && (elems == x.elems)
-      case _ => false
-    }
-
     override def toString = "ArrayBuilder.ofInt"
   }
 
@@ -345,11 +329,6 @@ object ArrayBuilder {
         res
       }
       else mkArray(size)
-    }
-
-    override def equals(other: Any): Boolean = other match {
-      case x: ofLong => (size == x.size) && (elems == x.elems)
-      case _ => false
     }
 
     override def toString = "ArrayBuilder.ofLong"
@@ -389,11 +368,6 @@ object ArrayBuilder {
       else mkArray(size)
     }
 
-    override def equals(other: Any): Boolean = other match {
-      case x: ofFloat => (size == x.size) && (elems == x.elems)
-      case _ => false
-    }
-
     override def toString = "ArrayBuilder.ofFloat"
   }
 
@@ -429,11 +403,6 @@ object ArrayBuilder {
         res
       }
       else mkArray(size)
-    }
-
-    override def equals(other: Any): Boolean = other match {
-      case x: ofDouble => (size == x.size) && (elems == x.elems)
-      case _ => false
     }
 
     override def toString = "ArrayBuilder.ofDouble"
@@ -473,11 +442,6 @@ object ArrayBuilder {
       else mkArray(size)
     }
 
-    override def equals(other: Any): Boolean = other match {
-      case x: ofBoolean => (size == x.size) && (elems == x.elems)
-      case _ => false
-    }
-
     override def toString = "ArrayBuilder.ofBoolean"
   }
 
@@ -488,17 +452,23 @@ object ArrayBuilder {
     protected def elems: Array[Unit] = throw new UnsupportedOperationException()
 
     def addOne(elem: Unit): this.type = {
-      size += 1
+      val newSize = size + 1
+      ensureSize(newSize)
+      size = newSize
       this
     }
 
     override def addAll(xs: IterableOnce[Unit]): this.type = {
-      size += xs.iterator.size
+      val newSize = size + xs.iterator.size
+      ensureSize(newSize)
+      size = newSize
       this
     }
 
     override def addAll(xs: Array[_ <: Unit], offset: Int, length: Int): this.type = {
-      size += length
+      val newSize = size + length
+      ensureSize(newSize)
+      size = newSize
       this
     }
 
@@ -509,12 +479,7 @@ object ArrayBuilder {
       ans
     }
 
-    override def equals(other: Any): Boolean = other match {
-      case x: ofUnit => (size == x.size)
-      case _ => false
-    }
-
-    protected[this] def resize(size: Int): Unit = ()
+    protected[this] def resize(size: Int): Unit = capacity = size
 
     override def toString = "ArrayBuilder.ofUnit"
   }

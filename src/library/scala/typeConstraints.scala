@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -116,7 +116,7 @@ sealed abstract class <:<[-From, +To] extends (From => To) with Serializable {
     type G[+T] = C => T
     substituteCo[G](r)
   }
-  /** If `From <: To` and `C <: From`, then `C <: To` (subtyping is transitive) */
+  /** If `From <: To` and `C <: From`, then `C <: To` (subtyping is transitive). */
   def compose[C](r: C <:< From): C <:< To = {
     type G[+T] = C <:< T
     substituteCo[G](r)
@@ -125,7 +125,7 @@ sealed abstract class <:<[-From, +To] extends (From => To) with Serializable {
     type G[-T] = T => C
     substituteContra[G](r)
   }
-  /** If `From <: To` and `To <: C`, then `From <: C` (subtyping is transitive) */
+  /** If `From <: To` and `To <: C`, then `From <: C` (subtyping is transitive). */
   def andThen[C](r: To <:< C): From <:< C = {
     type G[-T] = T <:< C
     substituteContra[G](r)
@@ -150,7 +150,7 @@ object <:< {
     override def substituteCo    [F[_]](ff: F[Any]) = ff
     override def substituteContra[F[_]](ff: F[Any]) = ff
     override def apply(x: Any) = x
-    override def flip = this
+    override def flip: Any =:= Any = this
     override def compose[C](r: C =>  Any) = r
     override def compose[C](r: C <:< Any) = r
     override def compose[C](r: C =:= Any) = r
@@ -168,7 +168,7 @@ object <:< {
   implicit def refl[A]: A =:= A = singleton.asInstanceOf[A =:= A]
   // = new =:=[A, A] { override def substituteBoth[F[_, _]](faa: F[A, A]): F[A, A] = faa }
 
-  /** If `A <: B` and `B <: A`, then `A = B` (subtyping is antisymmetric) */
+  /** If `A <: B` and `B <: A`, then `A = B` (subtyping is antisymmetric). */
   def antisymm[A, B](implicit l: A <:< B, r: B <:< A): A =:= B = singleton.asInstanceOf[A =:= B]
   // = ??? (I don't think this is possible to implement "safely")
 }
@@ -217,18 +217,18 @@ sealed abstract class =:=[From, To] extends (From <:< To) with Serializable {
 
   /** @inheritdoc */ override def apply(f: From) = super.apply(f)
 
-  /** If `From = To` then `To = From` (equality is symmetric) */
+  /** If `From = To` then `To = From` (equality is symmetric). */
   def flip: To =:= From = {
     type G[T, F] = F =:= T
     substituteBoth[G](this)
   }
 
-  /** If `From = To` and `C = From`, then `C = To` (equality is transitive) */
+  /** If `From = To` and `C = From`, then `C = To` (equality is transitive). */
   def compose[C](r: C =:= From): C =:= To = {
     type G[T] = C =:= T
     substituteCo[G](r)
   }
-  /** If `From = To` and `To = C`, then `From = C` (equality is transitive) */
+  /** If `From = To` and `To = C`, then `From = C` (equality is transitive). */
   def andThen[C](r: To =:= C): From =:= C = {
     type G[T] = T =:= C
     substituteContra[G](r)

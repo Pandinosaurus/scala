@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,15 +13,15 @@
 package scala.tools.testkit
 
 import junit.framework.AssertionFailedError
-import org.junit.Assert._
+import org.junit.Assert.assertTrue
 
 import scala.collection.mutable.{Clearable, ListBuffer}
 import scala.jdk.CollectionConverters._
 import scala.reflect.internal.util.BatchSourceFile
 import scala.reflect.io.VirtualDirectory
+import scala.sys.process.{Parser => CommandLineParser}
 import scala.tools.asm.Opcodes
 import scala.tools.asm.tree.{AbstractInsnNode, ClassNode, MethodNode}
-import scala.tools.cmd.CommandLineParser
 import scala.tools.nsc.backend.jvm.{AsmUtils, MethodNode1}
 import scala.tools.nsc.backend.jvm.AsmUtils._
 import scala.tools.nsc.backend.jvm.opt.BytecodeUtils
@@ -181,6 +181,9 @@ object BytecodeTesting {
   }
 
   def makeSourceFile(code: String, filename: String): BatchSourceFile = new BatchSourceFile(filename, code)
+  private var fileCount = 0
+  private def fileN = { val n = fileCount; fileCount += 1; if (n == 0) "" else n.toString }
+  def SourceFile(code: String*): List[BatchSourceFile] = code.map(makeSourceFile(_, s"UnitTestSource$fileN")).toList
 
   def getGeneratedClassfiles(outDir: AbstractFile): List[(String, Array[Byte])] = {
     def files(dir: AbstractFile): List[(String, Array[Byte])] = {

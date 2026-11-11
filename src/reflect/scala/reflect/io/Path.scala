@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -233,13 +233,13 @@ class Path private[io] (val jfile: JFile) {
   // creations
   def createDirectory(force: Boolean = true, failIfExists: Boolean = false): Directory = {
     val res = if (force) jfile.mkdirs() else jfile.mkdir()
-    if (!res && failIfExists && exists) fail("Directory '%s' already exists." format name)
+    if (!res && failIfExists && exists) fail(s"Directory '$name' already exists.")
     else if (isDirectory) toDirectory
     else new Directory(jfile)
   }
   def createFile(failIfExists: Boolean = false): File = {
     val res = jfile.createNewFile()
-    if (!res && failIfExists && exists) fail("File '%s' already exists." format name)
+    if (!res && failIfExists && exists) fail(s"File '$name' already exists.")
     else if (isFile) toFile
     else new File(jfile)
   }

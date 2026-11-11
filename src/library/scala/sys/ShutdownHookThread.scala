@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,7 +13,7 @@
 package scala
 package sys
 
-/** A minimal Thread wrapper to enhance shutdown hooks.  It knows
+/** A minimal `Thread` wrapper to enhance shutdown hooks.  It knows
  *  how to unregister itself.
  */
 class ShutdownHookThread private (runnable: Runnable, name: String) extends Thread(runnable, name) {

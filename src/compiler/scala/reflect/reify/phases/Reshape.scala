@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,7 +13,7 @@
 package scala.reflect.reify
 package phases
 
-import scala.annotation.tailrec
+import scala.annotation.{tailrec, unused}
 import scala.tools.nsc.symtab.Flags._
 
 trait Reshape {
@@ -37,7 +37,7 @@ trait Reshape {
    *    * Transforming Annotated(annot, expr) into Typed(expr, TypeTree(Annotated(annot, _))
    *    * Non-idempotencies of the typechecker: https://github.com/scala/bug/issues/5464
    */
-  val reshape = new AstTransformer {
+  val reshape: AstTransformer = new AstTransformer {
     var currentSymbol: Symbol = NoSymbol
 
     override def transform(tree0: Tree) = {
@@ -192,7 +192,7 @@ trait Reshape {
 
     @tailrec
     private def toPreTyperTypedOrAnnotated(tree: Tree): Tree = tree match {
-      case ty @ Typed(expr1, tpt) =>
+      case ty @ Typed(_, tpt) =>
         if (reifyDebug) println("reify typed: " + tree)
         val original = tpt match {
           case tt @ TypeTree() => tt.original
@@ -201,11 +201,10 @@ trait Reshape {
         val annotatedArg = {
           @tailrec
           def loop(tree: Tree): Tree = tree match {
-            case annotated1 @ Annotated(ann, annotated2 @ Annotated(_, _)) => loop(annotated2)
-            case annotated1 @ Annotated(ann, arg) => arg
+            case Annotated(_, annotated2 @ Annotated(_, _)) => loop(annotated2)
+            case Annotated(_, arg) => arg
             case _ => EmptyTree
           }
-
           loop(original)
         }
         if (annotatedArg != EmptyTree) {
@@ -220,7 +219,7 @@ trait Reshape {
           if (reifyDebug) println("verdict: wasn't annotated, reify as usual")
           ty
         }
-      case at @ Annotated(annot, arg) =>
+      case at @ Annotated(_, arg) =>
         if (reifyDebug) println("reify type annotations for: " + tree)
         assert(at.tpe.isInstanceOf[AnnotatedType], "%s (%s)".format(at.tpe, at.tpe.kind))
         val annot1 = toPreTyperAnnotation(at.tpe.asInstanceOf[AnnotatedType].annotations(0))
@@ -240,7 +239,7 @@ trait Reshape {
         def toScalaAnnotation(jann: ClassfileAnnotArg): Tree = (jann: @unchecked) match {
           case LiteralAnnotArg(const) => Literal(const)
           case ArrayAnnotArg(arr)     => Apply(Ident(definitions.ArrayModule), arr.toList map toScalaAnnotation)
-          case NestedAnnotArg(ann)    => toPreTyperAnnotation(ann)
+          case NestedAnnotArg(naa)    => toPreTyperAnnotation(naa)
         }
 
         ann.assocs map { case (nme, arg) => NamedArg(Ident(nme), toScalaAnnotation(arg)) }
@@ -251,7 +250,7 @@ trait Reshape {
       New(TypeTree(ann.atp) setOriginal extractOriginal(ann.original), List(args))
     }
 
-    private def trimAccessors(deff: Tree, stats: List[Tree]): List[Tree] = {
+    private def trimAccessors(@unused deff: Tree, stats: List[Tree]): List[Tree] = {
       val symdefs = (stats collect { case vodef: ValOrDefDef => vodef } map (vodeff => vodeff.symbol -> vodeff)).toMap
       val accessors = scala.collection.mutable.Map[ValDef, List[DefDef]]()
       stats collect { case ddef: DefDef => ddef } foreach (defdef => {
@@ -311,7 +310,7 @@ trait Reshape {
       stats1
     }
 
-    private def trimSyntheticCaseClassMembers(deff: Tree, stats: List[Tree]): List[Tree] =
+    private def trimSyntheticCaseClassMembers(@unused deff: Tree, stats: List[Tree]): List[Tree] =
       stats filterNot (memberDef => memberDef.isDef && {
         val isSynthetic = memberDef.symbol.isSynthetic
         // this doesn't work for local classes, e.g. for ones that are top-level to a quasiquote (see comments to companionClass)

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,7 +14,7 @@ package scala
 package collection
 package immutable
 
-import scala.annotation.tailrec
+import scala.annotation.{nowarn, tailrec}
 import scala.collection.mutable.ReusableBuilder
 import scala.collection.generic.DefaultSerializable
 import scala.runtime.Statics.releaseFence
@@ -70,6 +70,7 @@ sealed class ListMap[K, +V]
     res.iterator
   }
 
+  @nowarn("msg=overriding method keys")
   override def keys: Iterable[K] = {
     var curr: ListMap[K, V] = this
     var res: List[K] = Nil
@@ -119,7 +120,7 @@ sealed class ListMap[K, +V]
   * n elements will take O(n^2^) time. This makes the builder suitable only for a small number of
   * elements.
   *
-  * @see [[https://docs.scala-lang.org/overviews/collections/concrete-immutable-collection-classes.html#list-maps "Scala's Collection Library overview"]]
+  * @see [[https://docs.scala-lang.org/overviews/collections-2.13/concrete-immutable-collection-classes.html#list-maps "Scala's Collection Library overview"]]
   * section on `List Maps` for more information.
   * @define Coll ListMap
   * @define coll list map

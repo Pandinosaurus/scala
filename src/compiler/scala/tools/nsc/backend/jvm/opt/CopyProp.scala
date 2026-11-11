@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -110,9 +110,12 @@ abstract class CopyProp {
    *
    * Returns (staleStoreRemoved, intrinsicRewritten, callInlined).
    */
-  def eliminateStaleStoresAndRewriteSomeIntrinsics(method: MethodNode, owner: InternalName): (Boolean, Boolean, Boolean) = {
+  def eliminateStaleStoresAndRewriteSomeIntrinsics(method: MethodNode, owner: InternalName): (Boolean, Boolean, Boolean) =
+    eliminateStaleStoresAndRewriteSomeIntrinsics(method, owner, new ProdConsCache(method, owner))
+
+  def eliminateStaleStoresAndRewriteSomeIntrinsics(method: MethodNode, owner: InternalName, prodConsCache: ProdConsCache): (Boolean, Boolean, Boolean) = {
     if (!AsmAnalyzer.sizeOKForSourceValue(method)) (false, false, false) else {
-      lazy val prodCons = new ProdConsAnalyzer(method, owner)
+      lazy val prodCons = prodConsCache.get
       def hasNoCons(varIns: AbstractInsnNode, slot: Int) = prodCons.consumersOfValueAt(varIns.getNext, slot).isEmpty
 
       def popFor(vi: VarInsnNode): AbstractInsnNode = getPop(if (isSize2LoadOrStore(vi.getOpcode)) 2 else 1)
@@ -166,7 +169,7 @@ abstract class CopyProp {
 
         case mi: MethodInsnNode =>
           // rewrite `ClassTag(classOf[X]).newArray` to `new Array[X]`
-          val newArrayCls = BackendUtils.classTagNewArrayArg(mi, prodCons)
+          val newArrayCls = BackendUtils.classTagNewArrayArg(mi, prodConsCache)
           if (newArrayCls != null) {
             val receiverProds = prodCons.producersForValueAt(mi, prodCons.frameAt(mi).stackTop - 1)
             if (receiverProds.size == 1) {
@@ -271,7 +274,10 @@ abstract class CopyProp {
    *
    * Returns (pushPopChanged, castAdded, nullCheckAdded)
    */
-  def eliminatePushPop(method: MethodNode, owner: InternalName): (Boolean, Boolean, Boolean) = {
+  def eliminatePushPop(method: MethodNode, owner: InternalName): (Boolean, Boolean, Boolean) =
+    eliminatePushPop(method, owner, new ProdConsCache(method, owner))
+
+  def eliminatePushPop(method: MethodNode, owner: InternalName, prodConsCache: ProdConsCache): (Boolean, Boolean, Boolean) = {
     if (!AsmAnalyzer.sizeOKForSourceValue(method)) (false, false, false) else {
       // A queue of instructions producing a value that has to be eliminated. If possible, the
       // instruction (and its inputs) will be removed, otherwise a POP is inserted after
@@ -290,7 +296,7 @@ abstract class CopyProp {
       var castAdded = false
       var nullCheckAdded = false
 
-      lazy val prodCons = new ProdConsAnalyzer(method, owner)
+      lazy val prodCons = prodConsCache.get
 
       /*
        * Returns the producers for the stack value `inputSlot` consumed by `cons`, if the consumer
@@ -629,11 +635,11 @@ abstract class CopyProp {
 
     val pairStartStack = new mutable.Stack[(AbstractInsnNode, mutable.ListBuffer[RemovePairDependency])]
 
-    def push(insn: AbstractInsnNode) = {
+    def push(insn: AbstractInsnNode): Unit = {
       pairStartStack push ((insn, mutable.ListBuffer.empty))
     }
 
-    def addDepends(dependency: RemovePairDependency) = if (pairStartStack.nonEmpty) {
+    def addDepends(dependency: RemovePairDependency): Unit = if (pairStartStack.nonEmpty) {
       val (_, depends) = pairStartStack.top
       depends += dependency
     }

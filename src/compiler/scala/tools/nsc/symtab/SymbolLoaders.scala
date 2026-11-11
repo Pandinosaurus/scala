@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -16,11 +16,12 @@ package symtab
 import classfile.{ClassfileParser, ReusableDataReader}
 import java.io.IOException
 
+import scala.annotation._
 import scala.reflect.internal.MissingRequirementError
-import scala.reflect.io.{AbstractFile, NoAbstractFile}
-import scala.tools.nsc.util.{ClassPath, ClassRepresentation}
 import scala.reflect.internal.util.ReusableInstance
+import scala.reflect.io.{AbstractFile, NoAbstractFile}
 import scala.tools.nsc.Reporting.WarningCategory
+import scala.tools.nsc.util.{ClassPath, ClassRepresentation}
 
 /** This class ...
  *
@@ -50,7 +51,7 @@ abstract class SymbolLoaders {
   // forwards to runReporting.warning, but we don't have global in scope here
   def warning(pos: Position, msg: String, category: WarningCategory, site: String): Unit
 
-  protected def enterIfNew(owner: Symbol, member: Symbol, completer: SymbolLoader): Symbol = {
+  protected def enterIfNew(owner: Symbol, member: Symbol, @unused completer: SymbolLoader): Symbol = {
     assert(owner.info.decls.lookup(member.name) == NoSymbol, owner.fullName + "." + member.name)
     owner.info.decls enter member
     member
@@ -188,10 +189,10 @@ abstract class SymbolLoaders {
     ((classRep.binary, classRep.source) : @unchecked) match {
       case (Some(bin), Some(src))
       if platform.needCompile(bin, src) && !binaryOnly(owner, nameOf(classRep)) =>
-        if (settings.verbose) inform("[symloader] picked up newer source file for " + src.path)
+        if (settings.verbose.value) inform("[symloader] picked up newer source file for " + src.path)
         enterToplevelsFromSource(owner, nameOf(classRep), src)
       case (None, Some(src)) =>
-        if (settings.verbose) inform("[symloader] no class, picked up source file for " + src.path)
+        if (settings.verbose.value) inform("[symloader] no class, picked up source file for " + src.path)
         enterToplevelsFromSource(owner, nameOf(classRep), src)
       case (Some(bin), _) =>
         enterClassAndModule(owner, nameOf(classRep), new ClassfileLoader(bin, _, _))

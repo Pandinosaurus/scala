@@ -1,7 +1,7 @@
 /*
  * Scala classfile decoder (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -26,10 +26,10 @@ class Classfile(in: ByteArrayReader) {
   val classname = in.nextChar
   val superclass = in.nextChar
   val interfaces = readInterfaces
-  val fields = readMembers(true)
-  val methods = readMembers(false)
+  val fields = readMembers(field = true)
+  val methods = readMembers(field = false)
   val attribs = readAttribs
-  def scalaSigAttribute = attribs find (_.toString == Main.SCALA_SIG)
+  def scalaSigAttribute = attribs.find(_.toString == Main.SCALA_SIG)
 
   def readAttribs = {
     val n = in.nextChar

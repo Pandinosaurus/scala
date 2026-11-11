@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -11,7 +11,7 @@
  */
 
 // GENERATED CODE: DO NOT EDIT.
-// genprod generated these sources at: 2022-01-17T20:47:12.170348200Z
+// genprod generated these sources at: 2026-05-04T05:46:26.593Z
 
 package scala
 
@@ -36,7 +36,7 @@ package scala
  *  }}}
  */
 trait Function0[@specialized(Specializable.Primitives) +R] extends AnyRef { self =>
-  /** Apply the body of this function to the arguments.
+  /** Applies the body of this function to the arguments.
    *  @return   the result of function application.
    */
   def apply(): R

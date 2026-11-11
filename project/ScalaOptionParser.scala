@@ -83,7 +83,7 @@ object ScalaOptionParser {
 
   // TODO retrieve these data programmatically, ala https://github.com/scala/scala-tool-support/blob/master/bash-completion/src/main/scala/BashCompletion.scala
   private def booleanSettingNames = List("-X", "-Xasync", "-Xcheckinit", "-Xdev", "-Xdisable-assertions", "-Xexperimental", "-Xfatal-warnings", "-Xlog-free-terms", "-Xlog-free-types", "-Xlog-implicit-conversions", "-Xlog-reflective-calls",
-    "-Xno-forwarders", "-Xno-patmat-analysis", "-Xnon-strict-patmat-analysis", "-Xprint-pos", "-Xprint-types", "-Xprompt", "-Xresident", "-Xshow-phases", "-Xverify", "-Y",
+    "-Xnojline", "-Xno-forwarders", "-Xno-patmat-analysis", "-Xnon-strict-patmat-analysis", "-Xprint-pos", "-Xprint-types", "-Xprompt", "-Xresident", "-Xshow-phases", "-Xverify", "-Y",
     "-Ybreak-cycles", "-Ydebug", "-Ydebug-type-error", "-Ycompact-trees", "-YdisableFlatCpCaching", "-Ydoc-debug",
     "-Yide-debug",
     "-Ylog-classpath", "-Ymacro-debug-lite", "-Ymacro-debug-verbose", "-Ymacro-no-expand",
@@ -140,5 +140,5 @@ object ScalaOptionParser {
   private def scaladocPathSettingNames = List("-doc-root-content", "-diagrams-dot-path")
   private def scaladocMultiStringSettingNames = List("-doc-external-doc")
 
-  private val targetSettingNames = (8 to 18).map(_.toString).flatMap(v => v :: s"jvm-1.$v" :: s"jvm-$v" :: s"1.$v" :: Nil).toList
+  private val targetSettingNames = (8 to 28).map(_.toString).flatMap(v => v :: s"jvm-1.$v" :: s"jvm-$v" :: s"1.$v" :: Nil).toList
 }

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -48,7 +48,7 @@ sealed abstract class Stream[+A] extends AbstractSeq[A]
 
   override protected[this] def className: String = "Stream"
 
-  /** Apply the given function `f` to each element of this linear sequence
+  /** Applies the given function `f` to each element of this linear sequence
     * (while respecting the order of the elements).
     *
     *  @param f The treatment to apply to each element.
@@ -236,13 +236,13 @@ sealed abstract class Stream[+A] extends AbstractSeq[A]
     *  @param end   the ending string.
     *  @return      the string builder `b` to which elements were appended.
     */
-  override def addString(sb: StringBuilder, start: String, sep: String, end: String): StringBuilder = {
+  override def addString(sb: StringBuilder, start: String, sep: String, end: String): sb.type = {
     force
     addStringNoForce(sb.underlying, start, sep, end)
     sb
   }
 
-  private[this] def addStringNoForce(b: JStringBuilder, start: String, sep: String, end: String): JStringBuilder = {
+  private[this] def addStringNoForce(b: JStringBuilder, start: String, sep: String, end: String): b.type = {
     b.append(start)
     if (nonEmpty) {
       b.append(head)
@@ -311,6 +311,7 @@ sealed abstract class Stream[+A] extends AbstractSeq[A]
       }
     }
     b.append(end)
+    b
   }
 
   /**
@@ -496,7 +497,7 @@ object Stream extends SeqFactory[Stream] {
   }
 
   /**
-    * Create an infinite Stream starting at `start` and incrementing by
+    * Creates an infinite Stream starting at `start` and incrementing by
     * step `step`.
     *
     * @param start the start value of the Stream
@@ -507,7 +508,7 @@ object Stream extends SeqFactory[Stream] {
     cons(start, from(start + step, step))
 
   /**
-    * Create an infinite Stream starting at `start` and incrementing by `1`.
+    * Creates an infinite Stream starting at `start` and incrementing by `1`.
     *
     * @param start the start value of the Stream
     * @return the Stream starting at value `start`.
@@ -515,7 +516,7 @@ object Stream extends SeqFactory[Stream] {
   def from(start: Int): Stream[Int] = from(start, 1)
 
   /**
-    * Create an infinite Stream containing the given element expression (which
+    * Creates an infinite Stream containing the given element expression (which
     * is computed for each occurrence).
     *
     * @param elem the element composing the resulting Stream

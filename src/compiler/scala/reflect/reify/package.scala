@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -72,7 +72,7 @@ package object reify {
     if (tpe.isSpliceable) {
       val classTagInScope = typer0.resolveClassTag(enclosingMacroPosition, tpe, allowMaterialization = false)
       if (!classTagInScope.isEmpty) return Select(classTagInScope, nme.runtimeClass)
-      if (concrete) throw ReificationException(enclosingMacroPosition, "tpe %s is an unresolved spliceable type".format(tpe))
+      if (concrete) throw ReificationException(enclosingMacroPosition, s"type $tpe is an unresolved spliceable type")
     }
 
     tpe.dealiasWiden match {

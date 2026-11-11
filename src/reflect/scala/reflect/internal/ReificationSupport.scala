@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -17,7 +17,8 @@ package internal
 import Flags._
 import util._
 
-trait ReificationSupport { self: SymbolTable =>
+final class ReificationSupport[U <: SymbolTable with Singleton](val self: U) {
+  import self._
   import definitions._
 
   class ReificationSupportImpl extends ReificationSupportApi {
@@ -60,7 +61,7 @@ trait ReificationSupport { self: SymbolTable =>
     def setAnnotations[S <: Symbol](sym: S, annots: List[AnnotationInfo]): S =
       sym.setAnnotations(annots)
 
-    def setInfo[S <: Symbol](sym: S, tpe: Type): S =
+    def setInfo[S <: Symbol](sym: S, tpe: Type): sym.type =
       sym.setInfo(tpe).markAllCompleted()
 
     def mkThis(sym: Symbol): Tree = self.This(sym)
@@ -114,7 +115,7 @@ trait ReificationSupport { self: SymbolTable =>
     }
 
     def mkAnnotation(tree: Tree): Tree = tree match {
-      case SyntacticNew(Nil, SyntacticApplied(SyntacticAppliedType(_, _), _) :: Nil, noSelfType, Nil) =>
+      case SyntacticNew(Nil, SyntacticApplied(SyntacticAppliedType(_, _), _) :: Nil, `noSelfType`, Nil) =>
         tree
       case _ =>
         throw new IllegalArgumentException(s"Tree ${showRaw(tree)} isn't a correct representation of annotation." +
@@ -124,7 +125,7 @@ trait ReificationSupport { self: SymbolTable =>
     def mkAnnotation(trees: List[Tree]): List[Tree] = trees.map(mkAnnotation)
 
     def mkParam(argss: List[List[Tree]], extraFlags: FlagSet = NoFlags, excludeFlags: FlagSet = DEFERRED): List[List[ValDef]] =
-      argss.map { args => args.map { mkParam(_, extraFlags, excludeFlags) } }
+      argss.map(_.map(mkParam(_, extraFlags, excludeFlags)))
 
     def mkParam(tree: Tree, extraFlags: FlagSet, excludeFlags: FlagSet): ValDef = tree match {
       case Typed(Ident(name: TermName), tpt) =>
@@ -344,8 +345,12 @@ trait ReificationSupport { self: SymbolTable =>
       def apply(mods: Modifiers, name: TypeName, tparams: List[Tree],
                 constrMods: Modifiers, vparamss: List[List[Tree]],
                 earlyDefs: List[Tree], parents: List[Tree], selfType: Tree, body: List[Tree]): ClassDef = {
-        val extraFlags = PARAMACCESSOR | (if (mods.isCase) CASEACCESSOR else 0L)
-        val vparamss0 = mkParam(vparamss, extraFlags, excludeFlags = DEFERRED | PARAM)
+        val extraCaseFlags = if (mods.isCase) CASEACCESSOR else 0L
+        val excludeFlags = DEFERRED | PARAM
+        val vparamss0 =
+          if (vparamss.isEmpty) vparamss.asInstanceOf[List[List[ValDef]]]
+          else mkParam(vparamss.head :: Nil, PARAMACCESSOR | extraCaseFlags, excludeFlags) ++
+               mkParam(vparamss.tail, PARAMACCESSOR, excludeFlags)
         val tparams0 = mkTparams(tparams)
         val parents0 = gen.mkParents(mods,
           if (mods.isCase) parents.filter {
@@ -872,10 +877,10 @@ trait ReificationSupport { self: SymbolTable =>
     // drop potential @scala.unchecked annotation
     protected object MaybeUnchecked {
       def unapply(tree: Tree): Some[Tree] = tree match {
-        case Annotated(SyntacticNew(Nil, ScalaDot(tpnme.unchecked) :: Nil, noSelfType, Nil), annottee) =>
+        case Annotated(SyntacticNew(Nil, ScalaDot(tpnme.unchecked) :: Nil, `noSelfType`, Nil), annottee) =>
           Some(annottee)
         case Typed(annottee, MaybeTypeTreeOriginal(
-          Annotated(SyntacticNew(Nil, ScalaDot(tpnme.unchecked) :: Nil, noSelfType, Nil), _))) =>
+          Annotated(SyntacticNew(Nil, ScalaDot(tpnme.unchecked) :: Nil, `noSelfType`, Nil), _))) =>
           Some(annottee)
         case annottee => Some(annottee)
       }
@@ -900,7 +905,7 @@ trait ReificationSupport { self: SymbolTable =>
         case Typed(
                Block(
                  List(ClassDef(clsMods, tpnme.ANON_FUN_NAME, Nil, Template(
-                   List(abspf: TypeTree, ser: TypeTree), noSelfType, List(
+                   List(abspf: TypeTree, ser: TypeTree), `noSelfType`, List(
                      DefDef(_, nme.CONSTRUCTOR, _, _, _, _),
                      DefDef(_, nme.applyOrElse, _, _, _,
                        Match(_, cases :+

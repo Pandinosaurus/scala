@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -30,31 +30,46 @@ trait Builder[-A, +To] extends Growable[A] { self =>
   /** Result collection consisting of all elements appended so far. */
   def result(): To
 
-  /** Gives a hint how many elements are expected to be added
-    *  when the next `result` is called. Some builder classes
-    *  will optimize their representation based on the hint. However,
-    *  builder implementations are still required to work correctly even if the hint is
-    *  wrong, i.e. a different number of elements is added.
-    *
-    *  @param size  the hint how many elements will be added.
-    */
+  /** Gives a hint how many elements are expected to be added in total
+   *  by the time `result` is called.
+   *
+   *  Some builder classes will optimize their representation based on the hint.
+   *  However, builder implementations are required to work correctly even if the hint is
+   *  wrong, e.g., a different number of elements is added, or the hint is out of range.
+   *
+   *  The default implementation simply ignores the hint.
+   *
+   *  @param size  the hint how many elements will be added.
+   */
   def sizeHint(size: Int): Unit = ()
 
-  /** Gives a hint that one expects the `result` of this builder
-    *  to have the same size as the given collection, plus some delta. This will
-    *  provide a hint only if the collection has a known size
-    *  Some builder classes
-    *  will optimize their representation based on the hint. However,
-    *  builder implementations are still required to work correctly even if the hint is
-    *  wrong, i.e. a different number of elements is added.
-    *
-    *  @param coll  the collection which serves as a hint for the result's size.
-    *  @param delta a correction to add to the `coll.size` to produce the size hint.
-    */
-  final def sizeHint(coll: scala.collection.IterableOnce[_], delta: Int = 0): Unit = {
-    val s = coll.knownSize
-    if (s != -1) sizeHint(s + delta)
-  }
+  /** Gives a hint that the `result` of this builder is expected
+   *  to have the same size as the given collection, plus some delta.
+   *
+   *  This method provides a hint only if the collection has a known size,
+   *  as specified by the following pseudocode:
+   *
+   *  {{{
+   *    if (coll.knownSize != -1)
+   *      if (coll.knownSize + delta <= 0) sizeHint(0)
+   *      else sizeHint(coll.knownSize + delta)
+   *  }}}
+   *
+   *  If the delta is negative and the result size is known to be negative,
+   *  then the size hint is issued at zero.
+   *
+   *  Some builder classes will optimize their representation based on the hint.
+   *  However, builder implementations are required to work correctly even if the hint is
+   *  wrong, i.e., if a different number of elements is added.
+   *
+   *  @param coll  the collection which serves as a hint for the result's size.
+   *  @param delta a correction to add to the `coll.size` to produce the size hint (zero if omitted).
+   */
+  final def sizeHint(coll: scala.collection.IterableOnce[_], delta: Int = 0): Unit =
+    coll.knownSize match {
+      case -1 =>
+      case sz => sizeHint(0 max sz + delta)
+    }
 
   /** Gives a hint how many elements are expected to be added
     *  when the next `result` is called, together with an upper bound
@@ -76,7 +91,7 @@ trait Builder[-A, +To] extends Growable[A] { self =>
     }
   }
 
-  /** A builder resulting from this builder my mapping the result using `f`. */
+  /** A builder resulting from this builder by mapping the result using `f`. */
   def mapResult[NewTo](f: To => NewTo): Builder[A, NewTo] = new Builder[A, NewTo] {
     def addOne(x: A): this.type = { self += x; this }
     def clear(): Unit = self.clear()

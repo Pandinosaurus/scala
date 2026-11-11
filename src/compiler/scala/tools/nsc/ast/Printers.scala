@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -34,7 +34,7 @@ trait Printers extends scala.reflect.internal.Printers { this: Global =>
         printTree(
             if (tree.isDef && tree.symbol != NoSymbol && tree.symbol.isInitialized) {
               tree match {
-                case ClassDef(_, _, _, impl @ Template(ps, noSelfType, body))
+                case ClassDef(_, _, _, impl @ Template(ps, `noSelfType`, body))
                 if (tree.symbol.thisSym != tree.symbol) =>
                   ClassDef(tree.symbol, Template(ps, ValDef(tree.symbol.thisSym), body))
                 case ClassDef(_, _, _, impl)           => ClassDef(tree.symbol, impl)
@@ -63,7 +63,7 @@ trait Printers extends scala.reflect.internal.Printers { this: Global =>
       treePrinter.println()
       treePrinter.print(definition)
 
-    case TypeTreeWithDeferredRefCheck() =>
+    case _: TypeTreeWithDeferredRefCheck =>
       treePrinter.print("<tree with deferred refcheck>")
 
     case SelectFromArray(qualifier, name, _) =>
@@ -150,8 +150,8 @@ trait Printers extends scala.reflect.internal.Printers { this: Global =>
         // if a Block only continues one actual statement, just print it.
         case Block(stats, expr) =>
           allStatements(tree) match {
-            case List(x)            => printTree(x)
-            case xs                 => s()
+            case List(x) => printTree(x)
+            case _       => s()
           }
 
         // We get a lot of this stuff
@@ -195,13 +195,13 @@ trait Printers extends scala.reflect.internal.Printers { this: Global =>
 
   def asString(t: Tree): String = render(t, newStandardTreePrinter, settings.printtypes, settings.uniqid, settings.Yshowsymowners, settings.Yshowsymkinds)
   def asCompactString(t: Tree): String = render(t, newCompactTreePrinter, settings.printtypes, settings.uniqid, settings.Yshowsymowners, settings.Yshowsymkinds)
-  def asCompactDebugString(t: Tree): String = render(t, newCompactTreePrinter, true, true, true, true)
+  def asCompactDebugString(t: Tree): String = render(t, newCompactTreePrinter, printTypes = true, printIds = true, printOwners = true, printKinds = true)
 
   def newStandardTreePrinter(writer: PrintWriter): AstTreePrinter = new AstTreePrinter(writer)
   def newCompactTreePrinter(writer: PrintWriter): CompactTreePrinter = new CompactTreePrinter(writer)
 
   override def newTreePrinter(writer: PrintWriter): AstTreePrinter =
-    if (settings.Ycompacttrees) newCompactTreePrinter(writer)
+    if (settings.Ycompacttrees.value) newCompactTreePrinter(writer)
     else newStandardTreePrinter(writer)
   override def newTreePrinter(stream: OutputStream): AstTreePrinter = newTreePrinter(new PrintWriter(stream))
   override def newTreePrinter(): AstTreePrinter = newTreePrinter(new PrintWriter(ConsoleWriter))

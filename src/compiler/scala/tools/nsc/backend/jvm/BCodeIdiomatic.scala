@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -23,7 +23,7 @@ import scala.tools.nsc.backend.jvm.GenBCode._
 /*
  *  A high-level facade to the ASM API for bytecode generation.
  *
- *  @author  Miguel Garcia, https://lampwww.epfl.ch/~magarcia/ScalaCompilerCornerReloaded/
+ *  @author  Miguel Garcia
  *
  */
 abstract class BCodeIdiomatic {
@@ -236,9 +236,11 @@ abstract class BCodeIdiomatic {
         asm.Type.getMethodDescriptor(StringRef.toASMType, argTypes:_*),
         new asm.Handle(
           asm.Opcodes.H_INVOKESTATIC,
-          "java/lang/invoke/StringConcatFactory",
+          jliStringConcatFactoryRef.internalName,
           "makeConcatWithConstants",
-          "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;Ljava/lang/invoke/MethodType;Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/invoke/CallSite;",
+          List(jliMethodHandlesLookupRef, StringRef, jliMethodTypeRef, StringRef, ArrayBType(ObjectRef))
+            .map(_.descriptor)
+            .mkString("(", "", s")${jliCallSiteRef.descriptor}"),
           false
         ),
         (recipe +: constants):_*
@@ -591,7 +593,7 @@ abstract class BCodeIdiomatic {
 
     // can-multi-thread
     final def checkCast(tk: RefBType): Unit = {
-      // TODO ICode also requires: but that's too much, right? assert(!isBoxedType(tk),     "checkcast on boxed type: " + tk)
+      // TODO the old ICode backend also required this, but that's too much, right? assert(!isBoxedType(tk),     "checkcast on boxed type: " + tk)
       jmethod.visitTypeInsn(Opcodes.CHECKCAST, tk.classOrArrayType)
     }
 
@@ -672,7 +674,7 @@ abstract class BCodeIdiomatic {
    *
    */
   class LabelDefsFinder(rhs: Tree) extends InternalTraverser {
-    val result = mutable.AnyRefMap.empty[Tree, List[LabelDef]]
+    val result = mutable.HashMap.empty[Tree, List[LabelDef]]
     var acc: List[LabelDef] = Nil
     var directResult: List[LabelDef] = Nil
 

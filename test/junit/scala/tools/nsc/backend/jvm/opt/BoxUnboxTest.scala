@@ -381,7 +381,7 @@ class BoxUnboxTest extends BytecodeTesting {
         |}""".stripMargin
     val m = compileMethod(code)
     assertSameCode(m, List(
-      TypeOp(NEW, "java/lang/Object"), Op(DUP), Invoke(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false), TypeOp(CHECKCAST, "java/lang/Integer"), Op(POP),
+      TypeOp(NEW, "java/lang/Object"), Op(DUP), Invoke(INVOKESPECIAL, "java/lang/Object", "<init>", "()V", itf = false), TypeOp(CHECKCAST, "java/lang/Integer"), Op(POP),
       Ldc(LDC, ""), TypeOp(CHECKCAST, "java/lang/Long"), Op(POP),
       VarOp(ALOAD, 1), Jump(IFNONNULL, Label(18)), Op(ACONST_NULL), Op(ATHROW), Label(18),
       VarOp(ALOAD, 0), TypeOp(CHECKCAST, "java/lang/Integer"), Op(POP),
@@ -408,5 +408,18 @@ class BoxUnboxTest extends BytecodeTesting {
         |}""".stripMargin
     val m = getMethod(compileClass(code), "waitForIt")
     assertSameCode(m, List(VarOp(ILOAD, 2), TableSwitch(TABLESWITCH, 0, 0, Label(4), List(Label(4))), Label(4), Op(RETURN)))
+  }
+
+  @Test
+  def primitiveBoxCreatedWithNew(): Unit = {
+    val code =
+      """class C {
+        |  def t(x: Int): Int = {
+        |    val b = new java.lang.Integer(x)
+        |    b.intValue
+        |  }
+        |}""".stripMargin
+    val c = compileClass(code, allowMessage = ignoreDeprecations)
+    assertSameCode(getMethod(c, "t"), List(VarOp(ILOAD, 1), Op(IRETURN)))
   }
 }

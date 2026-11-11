@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -15,12 +15,12 @@ package typechecker
 package splain
 
 trait SplainDiagnostics extends splain.SplainFormatting {
-  self: Analyzer =>
+  self: AbstractAnalyzer =>
 
   import global._
 
   def splainFoundReqMsg(found: Type, req: Type): String = {
-    if (settings.VtypeDiffs) ";\n" + showFormattedL(formatDiff(found, req, top = true), break = true).indent.joinLines
+    if (settings.VtypeDiffs.value) ";\n" + showFormattedL(formatDiff(found, req, top = true), break = true).indent.joinLines
     else ""
   }
 }

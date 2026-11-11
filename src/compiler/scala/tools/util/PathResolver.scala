@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -16,12 +16,12 @@ package util
 
 import java.net.URL
 
+import scala.reflect.io.{Directory, File, Path}
 import scala.tools.reflect.WrappedProperties.AccessControl
 import scala.tools.nsc.{CloseableRegistry, Settings}
-import scala.tools.nsc.util.ClassPath
-import scala.reflect.io.{Directory, File, Path}
-import PartialFunction.condOpt
 import scala.tools.nsc.classpath._
+import scala.tools.nsc.util.ClassPath
+import PartialFunction.condOpt
 
 // Loosely based on the draft specification at:
 // https://wiki.scala-lang.org/display/SIW/Classpath
@@ -211,22 +211,21 @@ final class PathResolver(settings: Settings, closeableRegistry: CloseableRegistr
 
   private val classPathFactory = new ClassPathFactory(settings, closeableRegistry)
 
-  import PathResolver.{ AsLines, Defaults, ppcp }
+  import PathResolver.{AsLines, Defaults, ppcp}
 
-  private def cmdLineOrElse(name: String, alt: String) = {
-    (commandLineFor(name) match {
-      case Some("") => None
-      case x        => x
-    }) getOrElse alt
-  }
+  private def cmdLineOrElse(name: String, alt: String) =
+    commandLineFor(name) match {
+      case Some("") | None => alt
+      case Some(x)         => x
+    }
 
   private def commandLineFor(s: String): Option[String] = condOpt(s) {
-    case "javabootclasspath"  => settings.javabootclasspath.value
-    case "javaextdirs"        => settings.javaextdirs.value
-    case "bootclasspath"      => settings.bootclasspath.value
-    case "extdirs"            => settings.extdirs.value
-    case "classpath" | "cp"   => settings.classpath.value
-    case "sourcepath"         => settings.sourcepath.value
+    case "javabootclasspath" => settings.javabootclasspath.value
+    case "javaextdirs"       => settings.javaextdirs.value
+    case "bootclasspath"     => settings.bootclasspath.value
+    case "extdirs"           => settings.extdirs.value
+    case "classpath" | "cp"  => settings.classpath.value
+    case "sourcepath"        => settings.sourcepath.value
   }
 
   /** Calculated values based on any given command line options, falling back on
@@ -258,7 +257,9 @@ final class PathResolver(settings: Settings, closeableRegistry: CloseableRegistr
 
     // Assemble the elements!
     def basis = List[Iterable[ClassPath]](
-      jrt,                                          // 0. The Java 9+ classpath (backed by the ct.sym or jrt:/ virtual system, if available)
+      if (settings.javabootclasspath.isSetByUser)   // respect explicit `-javabootclasspath rt.jar`
+        Nil
+      else jrt,                                     // 0. The Java 9+ classpath (backed by the ct.sym or jrt:/ virtual system, if available)
       classesInPath(javaBootClassPath),             // 1. The Java bootstrap class path.
       contentsOfDirsInPath(javaExtDirs),            // 2. The Java extension class path.
       classesInExpandedPath(javaUserClassPath),     // 3. The Java application class path.
@@ -269,7 +270,7 @@ final class PathResolver(settings: Settings, closeableRegistry: CloseableRegistr
       sourcesInPath(sourcePath)                     // 7. The Scala source path.
     )
 
-    private def jrt: Option[ClassPath] = JrtClassPath.apply(settings.releaseValue, closeableRegistry)
+    private def jrt: List[ClassPath] = JrtClassPath.apply(settings.releaseValue, settings.systemPathValue, settings.unsafe.valueSetByUser, closeableRegistry)
 
     lazy val containers = basis.flatten.distinct
 
@@ -293,13 +294,13 @@ final class PathResolver(settings: Settings, closeableRegistry: CloseableRegistr
 
   def result: ClassPath = {
     val cp = computeResult()
-    if (settings.Ylogcp) {
-      Console print f"Classpath built from ${settings.toConciseString} %n"
-      Console print s"Defaults: ${PathResolver.Defaults}"
-      Console print s"Calculated: $Calculated"
+    if (settings.Ylogcp.value) {
+      Console.print(f"Classpath built from ${settings.toConciseString} %n")
+      Console.print(s"Defaults: ${PathResolver.Defaults}")
+      Console.print(s"Calculated: $Calculated")
 
-      val xs = (Calculated.basis drop 2).flatten.distinct
-      Console print (xs mkLines (s"After java boot/extdirs classpath has ${xs.size} entries:", indented = true))
+      val xs = Calculated.basis.drop(2).flatten.distinct
+      Console.print(xs.mkLines(s"After java boot/extdirs classpath has ${xs.size} entries:", indented = true))
     }
     cp
   }

@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -12,10 +12,15 @@
 
 package scala.tools.partest
 
+import scala.language.implicitConversions
 import scala.reflect.runtime.{universe => ru}
 import scala.tools.nsc._
 
-/** For testing compiler internals directly.
+/** A DirectTest for testing compiler internals.
+ *  The test must implement the `check` function to check
+ *  the result of compiling the `code`; the test may override
+ *  `sources` instead to check multiple sources.
+ *
  *  Each source code string in "sources" will be compiled, and
  *  the check function will be called with the source code and the
  *  resulting CompilationUnit.  The check implementation should
@@ -26,13 +31,12 @@ abstract class CompilerTest extends DirectTest {
   def check(source: String, unit: global.CompilationUnit): Unit
 
   lazy val global: Global = newCompiler()
-  lazy val units: List[global.CompilationUnit] = compilationUnits(global)(sources: _ *)
+  lazy val computedSources = sources
+  lazy val units: List[global.CompilationUnit] = compilationUnits(global)(computedSources: _ *)
   import global._
-  import definitions.{ compilerTypeFromTag }
+  import definitions.compilerTypeFromTag
 
-  override def extraSettings = "-usejavacp -d " + testOutput.path
-
-  def show() = sources.lazyZip(units).foreach(check)
+  def show() = computedSources.lazyZip(units).foreach(check)
 
   // Override at least one of these...
   def code = ""
@@ -44,7 +48,7 @@ abstract class CompilerTest extends DirectTest {
       if (sym eq NoSymbol) NoType
       else appliedType(sym, compilerTypeFromTag(t))
   }
-  implicit def mkMkType(sym: Symbol) = new MkType(sym)
+  implicit def mkMkType(sym: Symbol): MkType = new MkType(sym)
 
   def allMembers(root: Symbol): List[Symbol] = {
     def loop(seen: Set[Symbol], roots: List[Symbol]): List[Symbol] = {

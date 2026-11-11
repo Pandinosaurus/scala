@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,7 +14,6 @@ package scala.tools
 package reflect
 
 import scala.util.PropertiesTrait
-import java.security.AccessControlException
 
 /** For placing a wrapper function around property functions.
  *  Motivated by places like Google App Engine throwing exceptions
@@ -47,7 +46,6 @@ trait WrappedProperties extends PropertiesTrait {
 
 object WrappedProperties {
   object AccessControl extends WrappedProperties {
-    @annotation.nowarn("cat=deprecation") // AccessControlException is deprecated on JDK 17
-    def wrap[T](body: => T) = try Some(body) catch { case _: AccessControlException => None }
+    def wrap[T](body: => T) = try Some(body) catch { case _: SecurityException => None }
   }
 }

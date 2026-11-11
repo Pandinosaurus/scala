@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -16,17 +16,19 @@ package typechecker
 import scala.annotation.tailrec
 import symtab.Flags._
 import scala.reflect.internal.util.ListOfNil
+import scala.tools.nsc.Reporting.WarningCategory.Scala3Migration
+import scala.util.chaining._
 
 /*
  *  @author  Martin Odersky
  */
 trait Unapplies extends ast.TreeDSL {
-  self: Analyzer =>
+  self: AbstractAnalyzer =>
 
   import global._
   import definitions._
-  import CODE.{ CASE => _, _ }
-  import treeInfo.{ isRepeatedParamType, isByNameParamType }
+  import CODE.{CASE => _, _}
+  import treeInfo.{isByNameParamType, isRepeatedParamType}
 
   private def unapplyParamName = nme.x_0
   private def caseMods         = Modifiers(SYNTHETIC | CASE)
@@ -96,17 +98,31 @@ trait Unapplies extends ast.TreeDSL {
     }
   }
 
-  private def applyShouldInheritAccess(mods: Modifiers) =
-    currentRun.isScala3 && (mods.hasFlag(PRIVATE) || (!mods.hasFlag(PROTECTED) && mods.hasAccessBoundary))
+  private object ApplyAccess {
+    type Flags = Int
+    final val Default = 0
+    final val Warn = 1
+    final val Inherit = 2
+    def isWarn(access: Flags): Boolean = access.&(Warn) != 0
+    def isInherit(access: Flags): Boolean = access.&(Inherit) != 0
+  }
+  private def applyAccess(mods: Modifiers): ApplyAccess.Flags = {
+    import ApplyAccess._
+    val changeModsIn3 = mods.hasFlag(PRIVATE) || mods.hasFlag(PROTECTED) || mods.hasAccessBoundary
+    if (!changeModsIn3) Default
+    else if (currentRun.sourceFeatures.caseApplyCopyAccess) Inherit
+    else if (currentRun.isScala3) Warn
+    else Default
+  }
 
   /** The module corresponding to a case class; overrides toString to show the module's name
    */
   def caseModuleDef(cdef: ClassDef): ModuleDef = {
     val params = constrParamss(cdef)
-    def inheritFromFun = !cdef.mods.hasAbstractFlag && cdef.tparams.isEmpty && (params match {
+    def inheritFromFun = !currentRun.sourceFeatures.caseCompanionFunction && !cdef.mods.hasAbstractFlag && cdef.tparams.isEmpty && (params match {
       case List(ps) if ps.length <= MaxFunctionArity => true
       case _ => false
-    }) && !applyShouldInheritAccess(constrMods(cdef))
+    }) && !ApplyAccess.isInherit(applyAccess(constrMods(cdef)))
     def createFun = {
       def primaries = params.head map (_.tpt)
       gen.scalaFunctionConstr(primaries, toIdent(cdef), abstractFun = true)
@@ -151,12 +167,14 @@ trait Unapplies extends ast.TreeDSL {
    */
   def caseModuleApplyMeth(cdef: ClassDef): DefDef = {
     val inheritedMods = constrMods(cdef)
+    val access = applyAccess(inheritedMods)
     val mods =
-      if (applyShouldInheritAccess(inheritedMods))
-        (caseMods | (inheritedMods.flags & PRIVATE)).copy(privateWithin = inheritedMods.privateWithin)
-      else
-        caseMods
-    factoryMeth(mods, nme.apply, cdef)
+      if (ApplyAccess.isInherit(access)) (caseMods | (inheritedMods.flags & (PRIVATE | PROTECTED))).copy(privateWithin = inheritedMods.privateWithin)
+      else caseMods
+    factoryMeth(mods, nme.apply, cdef).tap(m =>
+      if (ApplyAccess.isWarn(access))
+        m.updateAttachment(CaseApplyInheritAccess)
+    )
   }
 
   /** The unapply method corresponding to a case class
@@ -247,11 +265,16 @@ trait Unapplies extends ast.TreeDSL {
    * ClassDef of the case class.
    */
   def caseClassCopyMeth(cdef: ClassDef): Option[DefDef] = {
-    def isDisallowed(vd: ValDef) = isRepeatedParamType(vd.tpt) || isByNameParamType(vd.tpt)
-    val classParamss  = constrParamss(cdef)
-
-    if (cdef.symbol.hasAbstractFlag || mexists(classParamss)(isDisallowed)) None
-    else {
+    val classParamss = constrParamss(cdef)
+    def copyOK = {
+      def warn() = if (currentRun.isScala3) runReporting.warning(cdef.namePos, "case `copy` method is allowed to have by-name parameters under Scala 3 (or with -Xsource-features:case-copy-by-name)", Scala3Migration, cdef.symbol)
+      def isAllowed(vd: ValDef) = {
+        def checkByName = currentRun.sourceFeatures.caseCopyByName || !isByNameParamType(vd.tpt).tap(if (_) warn())
+        !isRepeatedParamType(vd.tpt) && checkByName
+      }
+      !cdef.symbol.hasAbstractFlag && mforall(classParamss)(isAllowed)
+    }
+    def synthesizeCopy = {
       def makeCopyParam(vd: ValDef, putDefault: Boolean) = {
         val rhs = if (putDefault) toIdent(vd) else EmptyTree
         val flags = PARAM | (vd.mods.flags & IMPLICIT) | (if (putDefault) DEFAULTPARAM else 0)
@@ -259,27 +282,34 @@ trait Unapplies extends ast.TreeDSL {
         val tpt = atPos(vd.pos.focus)(TypeTree() setOriginal vd.tpt)
         treeCopy.ValDef(vd, Modifiers(flags), vd.name, tpt, rhs)
       }
-
       val tparams = constrTparamsInvariant(cdef)
       val paramss = classParamss match {
         case Nil => Nil
         case ps :: pss =>
           ps.map(makeCopyParam(_, putDefault = true)) :: mmap(pss)(makeCopyParam(_, putDefault = false))
       }
-
       val classTpe = classType(cdef, tparams)
       val argss = mmap(paramss)(toIdent)
       val body: Tree = New(classTpe, argss)
-      val copyMods =
-        if (currentRun.isScala3) {
+      val synth = Modifiers(SYNTHETIC)
+      val copyMods = {
+        val inheritFlag = currentRun.sourceFeatures.caseApplyCopyAccess
+        if (currentRun.isScala3 || inheritFlag) {
           val inheritedMods = constrMods(cdef)
-          Modifiers(SYNTHETIC | (inheritedMods.flags & AccessFlags), inheritedMods.privateWithin)
+          val mods3 = Modifiers(SYNTHETIC | (inheritedMods.flags & AccessFlags), inheritedMods.privateWithin)
+          if (inheritFlag) mods3
+          else {
+            if (mods3 != synth)
+              runReporting.warning(cdef.namePos, "access modifiers for `copy` method are copied from the case class constructor under Scala 3 (or with -Xsource-features:case-apply-copy-access)", Scala3Migration, cdef.symbol)
+            synth
+          }
         }
-        else Modifiers(SYNTHETIC)
-      val copyDefDef = atPos(cdef.pos.focus)(
+        else synth
+      }
+      atPos(cdef.pos.focus)(
         DefDef(copyMods, nme.copy, tparams, paramss, TypeTree(), body)
       )
-      Some(copyDefDef)
     }
+    if (copyOK) Some(synthesizeCopy) else None
   }
 }

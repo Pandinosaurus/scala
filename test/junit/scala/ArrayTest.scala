@@ -4,11 +4,14 @@ import org.junit.Assert.{ assertArrayEquals, assertFalse, assertTrue }
 import org.junit.Test
 
 import scala.runtime.BoxedUnit
+import scala.tools.testkit.AssertUtil._
+import scala.util.chaining._
 
 class ArrayTest {
   @Test
   def testArrayCopyOfUnit(): Unit = {
-    val expected = new Array[BoxedUnit](32).asInstanceOf[Array[AnyRef]]; java.util.Arrays.fill(expected, ().asInstanceOf[AnyRef])
+    val expected = new Array[BoxedUnit](32).asInstanceOf[Array[AnyRef]]
+                     .tap(array => java.util.Arrays.fill(array, (): Any))
     assertArrayEquals(expected, Array.copyOf(Array[Unit](), 32).asInstanceOf[Array[AnyRef]])
     assertArrayEquals(expected, Array.copyAs[Unit](Array[Nothing](), 32).asInstanceOf[Array[AnyRef]])
     assertArrayEquals(expected, Array.copyAs[Unit](Array[Unit](), 32).asInstanceOf[Array[AnyRef]])
@@ -46,5 +49,9 @@ class ArrayTest {
     //assertTrue(Array.equals(xs, ys))  // would be nice
     assertTrue("Arrays of String", Array.equals(Array[AnyRef]("hello, world"), Array[AnyRef]("hello, world")))
     assertFalse("Arrays of String", Array.equals(Array[AnyRef]("hello, world"), Array[AnyRef]("goodbye, cruel world")))
+  }
+
+  @Test def `i24877 range throws on naive step`: Unit = {
+    assertSameElements(Array[Int](27), Array.range(27, 42, Int.MaxValue))
   }
 }

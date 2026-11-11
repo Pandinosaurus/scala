@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -20,7 +20,7 @@ object EditDistance {
   /**
    * @author Paul Phillips
    * Translated from the java version at
-   *    https://www.merriampark.com/ld.htm
+   *    https://web.archive.org/web/20120526085419/http://www.merriampark.com/ld.htm
    *  which is declared to be public domain.
    */
   def levenshtein(

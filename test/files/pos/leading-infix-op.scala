@@ -1,5 +1,4 @@
-
-// scalac: -Xsource:3
+//> using options -Xsource:3 -Xsource-features:leading-infix
 
 trait T {
   def f(x: Int): Boolean =

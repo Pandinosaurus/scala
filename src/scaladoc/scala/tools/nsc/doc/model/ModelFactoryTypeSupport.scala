@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -17,7 +17,7 @@ package model
 import base._
 import diagram._
 import scala.annotation.nowarn
-import scala.collection._
+import scala.collection.{immutable, mutable}
 
 /** This trait extracts all required information for documentation from compilation units */
 trait ModelFactoryTypeSupport {
@@ -151,7 +151,7 @@ trait ModelFactoryTypeSupport {
           }
 
           val prefix =
-            if (!settings.docNoPrefixes && needsPrefix && (bSym != AnyRefClass /* which we normalize */)) {
+            if (!settings.docNoPrefixes.value && needsPrefix && (bSym != AnyRefClass /* which we normalize */)) {
               if (!owner.isRefinementClass) {
                 val qName = makeQualifiedName(owner, Some(inTpl.sym))
                 if (qName != "") qName + "." else ""
@@ -321,7 +321,7 @@ trait ModelFactoryTypeSupport {
 
     // scala/bug#4360: Entity caching depends on both the type AND the template it's in, as the prefixes might change for the
     // same type based on the template the type is shown in.
-    if (settings.docNoPrefixes)
+    if (settings.docNoPrefixes.value)
       typeCache.getOrElseUpdate(aType, createTypeEntity)
     else createTypeEntity
   }

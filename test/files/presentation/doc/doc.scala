@@ -1,3 +1,4 @@
+//> using options -Xlint -Werror -feature -language:reflectiveCalls
 import scala.reflect.internal.util.{ BatchSourceFile, SourceFile }
 import scala.tools.nsc.doc
 import scala.tools.nsc.doc.base._
@@ -44,9 +45,12 @@ object Test extends InteractiveTest {
 
       val global: this.type = this
 
+      // CommentPreservingTypers keeps doc comments across typer runs: once a unit is typed,
+      // its tree no longer has the `DocDef`s to recover them from.
+      @annotation.nowarn
       override lazy val analyzer = new {
         val global: outer.type = outer
-      } with doc.ScaladocAnalyzer with InteractiveAnalyzer {
+      } with doc.ScaladocAnalyzer with InteractiveAnalyzer with CommentPreservingTypers {
         override def newTyper(context: Context): InteractiveTyper with ScaladocTyper =
           new Typer(context) with InteractiveTyper with ScaladocTyper
       }
@@ -88,7 +92,7 @@ object Test extends InteractiveTest {
           println("Couldn't reload")
         case Some(_) =>
           val parseResponse = new Response[Tree]
-          askParsedEntered(batch, true, parseResponse)
+          askParsedEntered(batch, keepLoaded = true, parseResponse)
           parseResponse.get.swap.toOption match {
             case None =>
               println("Couldn't parse")

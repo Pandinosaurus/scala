@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -12,12 +12,10 @@
 
 package scala.tools.nsc.tasty.bridge
 
-import scala.annotation.tailrec
-
+import scala.annotation._
 import scala.collection.mutable
-import scala.reflect.io.AbstractFile
 import scala.reflect.internal.MissingRequirementError
-
+import scala.reflect.io.AbstractFile
 import scala.tools.tasty.{TastyName, TastyFlags}, TastyFlags._, TastyName.ObjectName
 import scala.tools.nsc.tasty.{TastyUniverse, TastyModes, SafeEq}, TastyModes._
 import scala.tools.nsc.tasty.{cyan, yellow, magenta, blue, green}
@@ -31,7 +29,7 @@ import scala.util.chaining._
 trait ContextOps { self: TastyUniverse =>
   import self.{symbolTable => u}
 
-  private def describeOwner(owner: Symbol): String = {
+  private def describeOwner(owner: Symbol)(implicit ctx: Context): String = {
     val kind =
       if (owner.isOneOf(Param | ParamSetter)) {
         if (owner.isType) "type parameter"
@@ -43,7 +41,7 @@ trait ContextOps { self: TastyUniverse =>
     s"$kind ${owner.nameString}"
   }
 
-  def boundsString(owner: Symbol): String = {
+  def boundsString(owner: Symbol)(implicit ctx: Context): String = {
     if (owner.isType) s"bounds of $owner"
     else if (owner.isOneOf(Param | ParamSetter)) s"parameter $owner"
     else "result"
@@ -63,7 +61,7 @@ trait ContextOps { self: TastyUniverse =>
     s"Unsupported Scala 3 $noun; found in ${location(ctx.globallyVisibleOwner)}."
   }
 
-  final def location(owner: Symbol): String = {
+  final def location(owner: Symbol)(implicit ctx: Context): String = {
     if (!isSymbol(owner))
       "<NoSymbol>"
     else if (owner.isClass || owner.isPackageClass || owner.isPackageObjectOrClass)
@@ -96,45 +94,49 @@ trait ContextOps { self: TastyUniverse =>
 
   /**Perform an operation within a context that has the mode `IndexStats` will force any collected annotations
    * afterwards */
-  def inIndexStatsContext(op: Context => Unit)(implicit ctx: Context): Unit = {
+  def inIndexStatsContext[T](op: Context => T)(implicit ctx: Context): T = {
     val statsCtx = ctx.addMode(IndexStats)
-    op(statsCtx)
-    statsCtx.initialContext.forceAnnotations()
+    try op(statsCtx)
+    finally statsCtx.initialContext.forceAnnotations()
   }
 
   /** Perform an operation within a context that has the mode `InnerScope` will enter any inline methods afterwards */
-  def inInnerScopeContext(op: Context => Unit)(implicit ctx: Context): Unit = {
+  def inInnerScopeContext[T](op: Context => T)(implicit ctx: Context): T = {
     val innerCtx = ctx.addMode(InnerScope)
-    op(innerCtx)
-    innerCtx.initialContext.enterLatentDefs(innerCtx.owner)
+    try op(innerCtx)
+    finally innerCtx.initialContext.enterLatentDefs(innerCtx.owner)
   }
 
 
   /** an aggregate of `inInnerScopeContext` within `inIndexStatsContext` */
-  def inIndexScopedStatsContext(op: Context => Unit)(implicit ctx: Context): Unit = {
+  def inIndexScopedStatsContext[T](op: Context => T)(implicit ctx: Context): T = {
     inIndexStatsContext(inInnerScopeContext(op)(_))(ctx)
   }
 
-  /**Forces lazy annotations, if one is `scala.annotation.internal.Child` then it will add the referenced type as a
-   * sealed child.
+  /**Analyses critical annotations, critical annotations will be forced as they are necessary to
+   * the reading of TASTy. E.g. `scala.annotation.internal.Child` is a critical annotation that
+   * must be forced to add its first type argument as a sealed child.
    */
   private def analyseAnnotations(sym: Symbol)(implicit ctx: Context): Unit = {
+
+    def inOwner[T](op: Context => T): T = op(ctx.withOwner(sym.owner))
 
     def lookupChild(childTpe: Type): Symbol = {
       val child = symOfType(childTpe)
       assert(isSymbol(child), s"did not find symbol of sealed child ${showType(childTpe)}")
-      if (child.isClass) {
+      if (child.isClass || child.isJava && child.isJavaEnum) {
         child
       }
       else {
-        assert(child.isModule, s"sealed child was not class or object ${showSym(child)}")
+        assert(child.isModule, s"sealed child was not class, object, or java enum case ${showSym(child)}")
         child.moduleClass
       }
     }
 
+    var problematic: List[String] = Nil
+
     for (annot <- sym.annotations) {
-      annot.completeInfo()
-      if (annot.tpe.typeSymbolDirect === defn.ChildAnnot) {
+      if (annot.symbol === defn.ChildAnnot) {
         val child = {
           val child0 = lookupChild(annot.tpe.typeArgs.head)
           if (child0 eq sym) {
@@ -154,6 +156,22 @@ trait ContextOps { self: TastyUniverse =>
         ctx.log(s"adding sealed child ${showSym(child)} to ${showSym(sym)}")
         sym.addChild(child)
       }
+      if ((annot.symbol eq defn.TargetNameAnnotationClass) ||
+          (annot.symbol eq defn.StaticMethodAnnotationClass)) {
+        problematic ::= inOwner { implicit ctx =>
+          annot.completeInfo() // these should be safe to force
+          unsupportedMessage(s"annotation on $sym: @$annot")
+        }
+      }
+      if (annot.symbol === defn.AnnotationDefaultClass) { // Scala 3 has a different annotation for default values
+        import scala.reflect.internal.ModifierFlags
+        assert(sym.owner.hasAllFlags(ModifierFlags.JAVA | ModifierFlags.JAVA_ANNOTATION))
+        sym.addAnnotation(u.definitions.AnnotationDefaultAttr) // Scala 2 expects this to be present
+      }
+    }
+    if (problematic.nonEmpty) {
+      sym.removeAnnotation(u.definitions.CompileTimeOnlyAttr)
+      sym.addAnnotation(u.definitions.CompileTimeOnlyAttr, u.Literal(u.Constant(problematic.head)))
     }
   }
 
@@ -173,6 +191,12 @@ trait ContextOps { self: TastyUniverse =>
 
     protected implicit final def implyThisCtx: thisCtx.type = thisCtx
 
+    /** JAVAattr is necessary to support pipelining in Zinc, we have to set Java erasure semantics if found.
+     * To support this we also need to support TASTy-only classpaths, see https://github.com/scala/scala3/pull/17594
+     * For a test case, see test/tasty/run-pipelined
+     */
+    def isJava: Boolean = mode.is(ReadJava)
+
     /**Associates the annotations with the symbol, and will force their evaluation if not reading statements.*/
     def adjustAnnotations(sym: Symbol, annots: List[DeferredAnnotation]): Unit = {
       if (annots.nonEmpty) {
@@ -182,14 +206,14 @@ trait ContextOps { self: TastyUniverse =>
         }
         else {
           log(s"eagerly adding annotations to ${showSym(sym)}")
-          analyseAnnotations(sym.setAnnotations(annots.map(_.eager(sym))))
+          analyseAnnotations(sym.setAnnotations(annots.map(_.lzy(sym))))
         }
       }
     }
 
     final def globallyVisibleOwner: Symbol = owner.logicallyEnclosingMember
 
-    final def ignoreAnnotations: Boolean = u.settings.YtastyNoAnnotations
+    final def ignoreAnnotations: Boolean = u.settings.YtastyNoAnnotations.value
 
     def requiresLatentEntry(decl: Symbol): Boolean = decl.isScala3Inline
 
@@ -198,7 +222,7 @@ trait ContextOps { self: TastyUniverse =>
     }
 
     final def log(str: => String): Unit = {
-      if (u.settings.YdebugTasty) {
+      if (u.settings.YdebugTasty.value) {
         logImpl(str)
       }
     }
@@ -223,7 +247,7 @@ trait ContextOps { self: TastyUniverse =>
         op.tap(eval => logImpl(s"${yellow(id0)} ${cyan(s">>>")} ${magenta(i.res(eval))}$modStr"))
       }
 
-      if (u.settings.YdebugTasty) initialContext.subTrace(addInfo(info, op))
+      if (u.settings.YdebugTasty.value) initialContext.subTrace(addInfo(info, op))
       else op
     }
 
@@ -246,7 +270,7 @@ trait ContextOps { self: TastyUniverse =>
       case TastyName.Root | TastyName.RootPkg => loadingMirror.RootPackage
       case TastyName.EmptyPkg                 => loadingMirror.EmptyPackage
       case fullname                           =>
-        symOrDependencyError(false, true, fullname)(loadingMirror.getPackage(encodeTermName(fullname).toString))
+        symOrDependencyError(isObject = false, isPackage = true, fullname)(loadingMirror.getPackage(encodeTermName(fullname).toString))
     }
 
     private def symOrDependencyError(isObject: Boolean, isPackage: Boolean, fullname: TastyName)(sym: => Symbol): Symbol = {
@@ -269,7 +293,7 @@ trait ContextOps { self: TastyUniverse =>
       owner.newTypeParameter(
         name     = u.freshTypeName("_$")(u.currentFreshNameCreator),
         pos      = u.NoPosition,
-        newFlags = FlagSets.Creation.Wildcard
+        newFlags = FlagSets.Creation.wildcard(isJava)
       ).setInfo(info)
 
     final def newConstructor(owner: Symbol, info: Type): Symbol = unsafeNewSymbol(
@@ -355,7 +379,7 @@ trait ContextOps { self: TastyUniverse =>
       if (completer.tflags.is(Object)) {
         val sourceObject = findObject(owner, encodeTermName(name))
         if (isSymbol(sourceObject))
-          redefineSymbol(sourceObject, completer.tflags, completer, privateWithin)
+          redefineSymbol(sourceObject, completer, privateWithin)
         else
           default()
       }
@@ -371,7 +395,7 @@ trait ContextOps { self: TastyUniverse =>
       if (completer.tflags.is(Object)) {
         val sourceObject = findObject(owner, encodeTermName(typeName.toTermName))
         if (isSymbol(sourceObject))
-          redefineSymbol(sourceObject.objectImplementation, completer.tflags, completer, privateWithin)
+          redefineSymbol(sourceObject.objectImplementation, completer, privateWithin)
         else
           default()
       }
@@ -419,20 +443,20 @@ trait ContextOps { self: TastyUniverse =>
     private final def unsafeNewUntypedSymbol(owner: Symbol, name: TastyName, flags: TastyFlagSet): Symbol = {
       if (flags.isOneOf(Param | ParamSetter)) {
         if (name.isTypeName) {
-          owner.newTypeParameter(encodeTypeName(name.toTypeName), u.NoPosition, newSymbolFlagSet(flags))
+          owner.newTypeParameter(encodeTypeName(name.toTypeName), u.NoPosition, newSymbolFlagSet(flags, isJava))
         }
         else {
           if (owner.isClass && flags.is(FlagSets.FieldGetter)) {
             val fieldFlags = flags &~ FlagSets.FieldGetter | FlagSets.LocalField
             val termName   = encodeTermName(name)
-            val getter     = owner.newMethodSymbol(termName, u.NoPosition, newSymbolFlagSet(flags))
-            val fieldSym   = owner.newValue(termName, u.NoPosition, newSymbolFlagSet(fieldFlags))
+            val getter     = owner.newMethodSymbol(termName, u.NoPosition, newSymbolFlagSet(flags, isJava))
+            val fieldSym   = owner.newValue(termName, u.NoPosition, newSymbolFlagSet(fieldFlags, isJava))
             fieldSym.info  = defn.CopyInfo(getter, fieldFlags)
             owner.rawInfo.decls.enter(fieldSym)
             getter
           }
           else {
-            owner.newValueParameter(encodeTermName(name), u.NoPosition, newSymbolFlagSet(flags))
+            owner.newValueParameter(encodeTermName(name), u.NoPosition, newSymbolFlagSet(flags, isJava))
           }
         }
       }
@@ -441,36 +465,39 @@ trait ContextOps { self: TastyUniverse =>
         if (!isEnum) {
           log(s"!!! visited module value $name first")
         }
-        val module = owner.newModule(encodeTermName(name), u.NoPosition, newSymbolFlagSet(flags))
+        val module = owner.newModule(encodeTermName(name), u.NoPosition, newSymbolFlagSet(flags, isJava))
         module.moduleClass.info =
           if (isEnum) defn.SingletonEnumClassInfo(module, flags)
           else defn.DefaultInfo
         module
       }
       else if (name.isTypeName) {
-        owner.newTypeSymbol(encodeTypeName(name.toTypeName), u.NoPosition, newSymbolFlagSet(flags))
+        owner.newTypeSymbol(encodeTypeName(name.toTypeName), u.NoPosition, newSymbolFlagSet(flags, isJava))
       }
       else if (name === TastyName.Constructor) {
-        owner.newConstructor(u.NoPosition, newSymbolFlagSet(flags &~ Stable))
+        owner.newConstructor(u.NoPosition, newSymbolFlagSet(flags &~ Stable, isJava))
       }
       else if (name === TastyName.MixinConstructor) {
-        owner.newMethodSymbol(u.nme.MIXIN_CONSTRUCTOR, u.NoPosition, newSymbolFlagSet(flags &~ Stable))
+        owner.newMethodSymbol(u.nme.MIXIN_CONSTRUCTOR, u.NoPosition, newSymbolFlagSet(flags &~ Stable, isJava))
+      }
+      else if (isJava && flags.not(Method)) {
+        owner.newValue(encodeTermName(name), u.NoPosition, newSymbolFlagSet(flags, isJava))
       }
       else {
-        owner.newMethodSymbol(encodeTermName(name), u.NoPosition, newSymbolFlagSet(flags))
+        owner.newMethodSymbol(encodeTermName(name), u.NoPosition, newSymbolFlagSet(flags, isJava))
       }
     }
 
     private final def unsafeNewUntypedClassSymbol(owner: Symbol, typeName: TastyName.TypeName, flags: TastyFlagSet): Symbol = {
       if (flags.is(FlagSets.Creation.ObjectClassDef)) {
         log(s"!!! visited module class $typeName first")
-        val module = owner.newModule(encodeTermName(typeName), u.NoPosition, FlagSets.Creation.Default)
+        val module = owner.newModule(encodeTermName(typeName), u.NoPosition, FlagSets.Creation.initial(isJava))
         module.info = defn.DefaultInfo
-        module.moduleClass.flags = newSymbolFlagSet(flags)
+        module.moduleClass.flags = newSymbolFlagSet(flags, isJava)
         module.moduleClass
       }
       else {
-        owner.newClassSymbol(encodeTypeName(typeName), u.NoPosition, newSymbolFlagSet(flags))
+        owner.newClassSymbol(encodeTypeName(typeName), u.NoPosition, newSymbolFlagSet(flags, isJava))
       }
     }
 
@@ -492,7 +519,7 @@ trait ContextOps { self: TastyUniverse =>
     final def processParents(cls: Symbol, parentTypes: List[Type]): parentTypes.type = {
       if (parentTypes.head.typeSymbolDirect === u.definitions.AnyValClass) {
         // TODO [tasty]: please reconsider if there is some shared optimised logic that can be triggered instead.
-        withPhaseNoLater("extmethods") { ctx0 =>
+        withPhaseNoLater("extmethods") { _ =>
           // duplicated from scala.tools.nsc.transform.ExtensionMethods
           cls.primaryConstructor.makeNotPrivate(noSymbol)
           for (decl <- cls.info.decls if decl.isMethod) {
@@ -503,6 +530,12 @@ trait ContextOps { self: TastyUniverse =>
             }
           }
         }
+      }
+      else if (isJava && parentTypes.exists(_.typeSymbolDirect === defn.JavaAnnotationClass)) {
+        import scala.reflect.internal.ModifierFlags
+        //sys.error(s"Java annotations are not supported in TASTy $cls: $parentTypes, ${parentTypes.map(_.typeSymbolDirect)}, ${parentTypes.map(_.typeSymbol)}")
+        cls.setFlag(ModifierFlags.JAVA_ANNOTATION)
+        cls.info.decls.enter(cls.newClassConstructor(u.NoPosition))
       }
       parentTypes
     }
@@ -519,13 +552,13 @@ trait ContextOps { self: TastyUniverse =>
       val selfTpe = defn.SingleType(sym.owner.thisPrefix, sym)
       val ctor = newConstructor(moduleCls, selfTpe)
       moduleCls.typeOfThis = selfTpe
-      moduleCls.flags = newSymbolFlagSet(moduleClsFlags)
+      moduleCls.flags = newSymbolFlagSet(moduleClsFlags, isJava = false)
       moduleCls.info = defn.ClassInfoType(intersectionParts(tpe), ctor :: Nil, moduleCls)
       moduleCls.privateWithin = sym.privateWithin
     }
 
-    final def redefineSymbol(symbol: Symbol, flags: TastyFlagSet, completer: TastyCompleter, privateWithin: Symbol): symbol.type = {
-      symbol.flags = newSymbolFlagSet(flags)
+    final def redefineSymbol(symbol: Symbol, completer: TastyCompleter, privateWithin: Symbol): symbol.type = {
+      symbol.flags = newSymbolFlagSet(completer.tflags, isJava)
       unsafeSetInfoAndPrivate(symbol, completer, privateWithin)
     }
 
@@ -746,7 +779,7 @@ trait ContextOps { self: TastyUniverse =>
           enterIfUnseen0(decls, d)
       }
 
-      def reportParameterizedTrait(cls: Symbol, decls: u.Scope): Unit = {
+      def reportParameterizedTrait(cls: Symbol, @unused decls: u.Scope): Unit = {
         val traitParams = traitParamAccessors(cls).getOrElse(Iterable.empty)
         if (traitParams.nonEmpty) {
           log {

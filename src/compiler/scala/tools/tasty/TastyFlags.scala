@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -60,24 +60,14 @@ object TastyFlags {
   final val ParamAlias            = Open.next
   final val Infix                 = ParamAlias.next
   final val Invisible             = Infix.next
+  final val Tracked               = Invisible.next
 
   def optFlag(cond: Boolean)(flag: TastyFlagSet): TastyFlagSet = if (cond) flag else EmptyTastyFlags
 
   case class TastyFlagSet(val toLong: Long) extends AnyVal {
 
-    private[TastyFlags] def shift: Long = {
-      var acc = 0L
-      var curr = toLong
-      while (curr != 0L) {
-        acc += 1L
-        curr = curr >> 1L
-      }
-      acc
-    }
-
-    private[TastyFlags] def next: TastyFlagSet = {
-      TastyFlagSet(1L << shift)
-    }
+    private[TastyFlags] def next: TastyFlagSet =
+      TastyFlagSet(if (toLong == 0) 1 else toLong << 1)
 
     def |(other: TastyFlagSet): TastyFlagSet                  = TastyFlagSet(toLong | other.toLong)
     def &(mask: TastyFlagSet): TastyFlagSet                   = TastyFlagSet(toLong & mask.toLong)
@@ -136,6 +126,7 @@ object TastyFlags {
         if (is(ParamAlias))    sb += "ParamAlias"
         if (is(Infix))         sb += "Infix"
         if (is(Invisible))     sb += "Invisible"
+        if (is(Tracked))       sb += "Tracked"
         sb.mkString(" | ")
       }
     }

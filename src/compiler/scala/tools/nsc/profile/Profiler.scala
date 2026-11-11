@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.management.openmbean.CompositeData
 import javax.management.{Notification, NotificationEmitter, NotificationListener}
 
-import scala.annotation.nowarn
+import scala.annotation.{nowarn, unused}
 import scala.collection.mutable.ArrayBuffer
 import scala.reflect.internal.util.ChromeTrace
 import scala.reflect.io.AbstractFile
@@ -30,7 +30,7 @@ import scala.tools.nsc.{Global, Phase, Settings}
 
 object Profiler {
   def apply(settings: Settings):Profiler =
-    if (!settings.YprofileEnabled) NoOpProfiler
+    if (!settings.YprofileEnabled.value) NoOpProfiler
     else {
       val reporter = settings.YprofileDestination.value match {
         case _ if !settings.YprofileDestination.isSetByUser => NoOpProfileReporter
@@ -129,6 +129,7 @@ private [profile] object RealProfiler {
   private val idGen = new AtomicInteger()
   lazy val allPlugins = ServiceLoader.load(classOf[ProfilerPlugin]).iterator.asScala.toList
 
+  @annotation.nowarn("cat=deprecation")
   private[profile] def snapThread(idleTimeNanos: Long): ProfileSnap = {
     val current = Thread.currentThread()
     val allocatedBytes = threadMx.getThreadAllocatedBytes(Thread.currentThread().getId)
@@ -184,7 +185,7 @@ private [profile] class RealProfiler(reporter : ProfileReporter, val settings: S
 
   private def doGC(): Unit = {
     System.gc()
-    System.runFinalization()
+    System.runFinalization(): @nowarn("cat=deprecation") // since Java 18
   }
 
   reporter.header(this)
@@ -194,7 +195,7 @@ private [profile] class RealProfiler(reporter : ProfileReporter, val settings: S
     //we may miss a GC event if gc is occurring as we call this
     RealProfiler.gcMx foreach {
       case emitter: NotificationEmitter => emitter.removeNotificationListener(this)
-      case gc =>
+      case _ =>
     }
     reporter.close(this)
     if (chromeTrace != null) {
@@ -334,13 +335,12 @@ private [profile] class RealProfiler(reporter : ProfileReporter, val settings: S
     }
   }
 
-  private def completionName(root: Global#Symbol, associatedFile: AbstractFile): String = {
+  private def completionName(root: Global#Symbol, @unused associatedFile: AbstractFile): String =
     if (root.hasPackageFlag || root.isTopLevel) root.javaBinaryNameString
     else {
       val enclosing = root.enclosingTopLevelClass
       enclosing.javaBinaryNameString + "::" + root.rawname.toString
     }
-  }
 }
 
 object EventType extends Enumeration {
@@ -354,16 +354,12 @@ object EventType extends Enumeration {
 }
 
 sealed trait ProfileReporter {
-  @nowarn("cat=lint-inaccessible")
   def reportBackground(profiler: RealProfiler, threadRange: ProfileRange): Unit
-  @nowarn("cat=lint-inaccessible")
   def reportForeground(profiler: RealProfiler, threadRange: ProfileRange): Unit
 
   def reportGc(data: GcEventData): Unit
 
-  @nowarn("cat=lint-inaccessible")
   def header(profiler: RealProfiler) :Unit
-  @nowarn("cat=lint-inaccessible")
   def close(profiler: RealProfiler) :Unit
 }
 
@@ -403,6 +399,7 @@ class StreamProfileReporter(out:PrintWriter) extends ProfileReporter {
   override def reportForeground(profiler: RealProfiler, threadRange: ProfileRange): Unit = {
     reportCommon(EventType.MAIN, profiler, threadRange)
   }
+  @annotation.nowarn("cat=deprecation")
   private def reportCommon(tpe:EventType.value, profiler: RealProfiler, threadRange: ProfileRange): Unit = {
     out.println(s"$tpe,${threadRange.start.snapTimeNanos},${threadRange.end.snapTimeNanos},${profiler.id},${threadRange.phase.id},${threadRange.phase.name},${threadRange.purpose},${threadRange.taskCount},${threadRange.thread.getId},${threadRange.thread.getName},${threadRange.runNs},${threadRange.idleNs},${threadRange.cpuNs},${threadRange.userNs},${threadRange.allocatedBytes},${threadRange.end.heapBytes} ")
   }

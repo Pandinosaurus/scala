@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -13,11 +13,11 @@
 package scala.tools.nsc
 package ast
 
-import scala.annotation.tailrec
+import scala.annotation.{tailrec, unused}
 import scala.collection.mutable.ListBuffer
+import scala.reflect.internal.util.{FreshNameCreator, ListOfNil}
+import scala.util.chaining._
 import symtab.Flags._
-import scala.reflect.internal.util.FreshNameCreator
-import scala.reflect.internal.util.ListOfNil
 
 /** XXX to resolve: TreeGen only assumes global is a SymbolTable, but
  *  TreeDSL at the moment expects a Global.  Can we get by with SymbolTable?
@@ -173,8 +173,8 @@ abstract class TreeGen extends scala.reflect.internal.TreeGen with TreeDSL {
   /** Translate names in Select/Ident nodes to type names.
    */
   def convertToTypeName(tree: Tree): Option[RefTree] = tree match {
-    case Select(qual, name) => Some(Select(qual, name.toTypeName))
-    case Ident(name)        => Some(Ident(name.toTypeName))
+    case Select(qual, name) => Some(Select(qual, name.toTypeName).setAttachments(tree.attachments))
+    case Ident(name)        => Some(Ident(name.toTypeName).setAttachments(tree.attachments))
     case _                  => None
   }
 
@@ -303,7 +303,7 @@ abstract class TreeGen extends scala.reflect.internal.TreeGen with TreeDSL {
     * @param name name for the new method
     * @param additionalFlags flags to be put on the method in addition to FINAL
     */
-  private def mkMethodForFunctionBody(localTyper: analyzer.Typer)
+  private def mkMethodForFunctionBody(@unused localTyper: analyzer.Typer)
                                      (owner: Symbol, fun: Function, name: TermName)
                                      (methParamProtos: List[Symbol] = fun.vparams.map(_.symbol),
                                       resTp: Type = functionResultType(fun.tpe),
@@ -366,15 +366,21 @@ abstract class TreeGen extends scala.reflect.internal.TreeGen with TreeDSL {
 
   def expandFunction(localTyper: analyzer.Typer)(fun: Function, inConstructorFlag: Long): Tree = {
     val anonClass = fun.symbol.owner.newAnonymousFunctionClass(fun.pos, inConstructorFlag)
-    val parents = if (isFunctionType(fun.tpe)) {
-      anonClass addAnnotation SerialVersionUIDAnnotation
-      addSerializable(abstractFunctionType(fun.vparams.map(_.symbol.tpe), fun.body.tpe.deconst))
-    } else {
-      if (fun.tpe.typeSymbol.isSubClass(SerializableClass))
-        anonClass addAnnotation SerialVersionUIDAnnotation
-      fun.tpe :: Nil
+    val typeSym = fun.tpe.typeSymbol
+    val isFunction = isFunctionSymbol(typeSym)
+    if (isFunction || typeSym.isSubClass(SerializableClass))
+      anonClass.addAnnotation(SerialVersionUIDAnnotation)
+
+    val rScope = newScope
+    def parents(tp: Type): List[Type] = tp match {
+      case RefinedType(ps, scope) =>
+        assert(scope.forall(_.isType), s"Cannot expand function of type $tp")
+        ps.flatMap(parents).tap(_ => scope.foreach(rScope.enter))
+      case _ =>
+        if (!isFunction) tp :: Nil
+        else addSerializable(abstractFunctionType(fun.vparams.map(_.symbol.tpe), fun.body.tpe.deconst))
     }
-    anonClass setInfo ClassInfoType(parents, newScope, anonClass)
+    anonClass.setInfo(ClassInfoType(parents(fun.tpe), rScope, anonClass))
 
     // The original owner is used in the backend for the EnclosingMethod attribute. If fun is
     // nested in a value-class method, its owner was already changed to the extension method.
@@ -387,7 +393,8 @@ abstract class TreeGen extends scala.reflect.internal.TreeGen with TreeDSL {
     localTyper.typedPos(fun.pos) {
       Block(
         ClassDef(anonClass, NoMods, ListOfNil, List(samDef), fun.pos),
-        Typed(New(anonClass.tpe), TypeTree(fun.tpe)))
+        Typed(New(anonClass.tpe), TypeTree(fun.tpe)),
+      )
     }
   }
 

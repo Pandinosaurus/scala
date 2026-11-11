@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,7 +14,7 @@ package scala.tools.nsc
 package typechecker
 
 trait StdAttachments {
-  self: Analyzer =>
+  self: AbstractAnalyzer =>
 
   import global._
 
@@ -88,11 +88,11 @@ trait StdAttachments {
 
   /** Suppresses macro expansion of the tree by putting SuppressMacroExpansionAttachment on it.
    */
-  def suppressMacroExpansion(tree: Tree) = tree.updateAttachment(SuppressMacroExpansionAttachment)
+  def suppressMacroExpansion(tree: Tree): tree.type = tree.updateAttachment(SuppressMacroExpansionAttachment)
 
   /** Unsuppresses macro expansion of the tree by removing SuppressMacroExpansionAttachment from it and its children.
    */
-  def unsuppressMacroExpansion(tree: Tree): Tree = {
+  def unsuppressMacroExpansion(tree: Tree): tree.type = {
     tree.removeAttachment[SuppressMacroExpansionAttachment.type]
     tree match {
       // see the comment to `isMacroExpansionSuppressed` to learn why we need
@@ -125,6 +125,9 @@ trait StdAttachments {
    *  allows them to complete the synthesis.
    */
   case class SuperArgsAttachment(argss: List[List[Tree]])
+
+  /** Type tests involving classes compiled in this run, checked once the children of sealed classes are known. */
+  case class CheckableRecheckAttachment(rechecks: List[() => Option[(String, Reporting.WarningCategory)]])
 
   /** Convenience method for `SuperArgsAttachment`.
    *  Compared with `MacroRuntimeAttachment` this attachment has different a usage pattern,
@@ -196,16 +199,12 @@ trait StdAttachments {
    * track of other adapted trees.
    */
   case class OriginalTreeAttachment(original: Tree)
-
-  /** Marks a Typed tree with Unit tpt. */
-  case object TypedExpectingUnitAttachment
-  def explicitlyUnit(tree: Tree): Boolean = tree.hasAttachment[TypedExpectingUnitAttachment.type]
 }
 
 
 // imported from scalamacros/paradise
 trait MacroAnnotationAttachments {
-  self: Analyzer =>
+  self: AbstractAnalyzer =>
 
   import global._
   import scala.collection.mutable
@@ -257,6 +256,11 @@ trait MacroAnnotationAttachments {
   def unmarkExpanded(sym: Symbol): Symbol = if (sym != null && sym != NoSymbol) sym.removeAttachment[SymbolExpansionStatus] else sym
 
   case class CacheAttachment(cache: mutable.Map[String, Any])
+  /** The initializer of a `final` field in a Java source file which may be a constant expression.
+   *  The namer gives the field a constant type if the expression evaluates to a constant.
+   */
+  case class JavaConstantInitializer(expr: Tree)
+
   implicit class RichTree(tree: Tree) {
     def cached[T](key: String, op: => T): T = {
       val cache = tree.attachments.get[CacheAttachment].map(_.cache).getOrElse(mutable.Map[String, Any]())

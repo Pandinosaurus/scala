@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -602,7 +602,7 @@ private[collection] object RedBlackTree {
 
   // building
 
-  /** Build a Tree suitable for a TreeSet from an ordered sequence of keys */
+  /** Builds a Tree suitable for a TreeSet from an ordered sequence of keys */
   def fromOrderedKeys[A](xs: Iterator[A], size: Int): Tree[A, Null] = {
     val maxUsedDepth = 32 - Integer.numberOfLeadingZeros(size) // maximum depth of non-leaf nodes
     def f(level: Int, size: Int): Node[A, Null] = size match {
@@ -613,7 +613,7 @@ private[collection] object RedBlackTree {
         val left = f(level+1, leftSize)
         val x = xs.next()
         val right = f(level+1, size-1-leftSize)
-        val n = new Node(x, null, false, left, right, null)
+        val n = new Node(x, null, red = false, left, right, null)
         if(left ne null) left.parent = n
         right.parent = n
         n
@@ -621,7 +621,7 @@ private[collection] object RedBlackTree {
     new Tree(f(1, size), size)
   }
 
-  /** Build a Tree suitable for a TreeMap from an ordered sequence of key/value pairs */
+  /** Builds a Tree suitable for a TreeMap from an ordered sequence of key/value pairs */
   def fromOrderedEntries[A, B](xs: Iterator[(A, B)], size: Int): Tree[A, B] = {
     val maxUsedDepth = 32 - Integer.numberOfLeadingZeros(size) // maximum depth of non-leaf nodes
     def f(level: Int, size: Int): Node[A, B] = size match {
@@ -634,7 +634,7 @@ private[collection] object RedBlackTree {
         val left = f(level+1, leftSize)
         val (k, v) = xs.next()
         val right = f(level+1, size-1-leftSize)
-        val n = new Node(k, v, false, left, right, null)
+        val n = new Node(k, v, red = false, left, right, null)
         if(left ne null) left.parent = n
         right.parent = n
         n

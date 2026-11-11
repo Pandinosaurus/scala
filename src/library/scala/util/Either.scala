@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -85,6 +85,14 @@ package util
  *  // Similarly, refutable patterns are not supported:
  *  for (x: Int <- right1) yield x
  *  // error: value withFilter is not a member of Right[Double,Int]
+ *
+ *  // To use a filtered value, convert to an Option first,
+ *  // which drops the Left case, as None contains no value:
+ *  for {
+ *    i <- right1.toOption
+ *    if i > 0
+ *  } yield i
+ *
  *  }}}
  *
  *  Since `for` comprehensions use `map` and `flatMap`, the types
@@ -499,8 +507,8 @@ object Either {
   def cond[A, B](test: Boolean, right: => B, left: => A): Either[A, B] =
     if (test) Right(right) else Left(left)
 
-  /** Allows use of a `merge` method to extract values from Either instances
-   *  regardless of whether they are Left or Right.
+  /** Allows use of a `merge` method to extract values from `Either` instances
+   *  regardless of whether they are `Left` or `Right`.
    *
    *  {{{
    *  val l = Left(List(1)): Either[List[Int], Vector[Int]]

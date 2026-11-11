@@ -28,7 +28,7 @@ object HtmlFactoryTest extends Properties("HtmlFactory") {
     new DocFactory(reporter, settings)
   }
 
-  import scala.tools.nsc.doc.html.HtmlTags.{textOf, Elem => Node, Elems => NodeSeq}
+  import scala.tools.nsc.doc.html.HtmlTags.textOf
 
   def createTemplates(basename: String, set: Settings => Unit = _ => ()): collection.Map[String, HtmlPage] = {
     val result = mutable.Map[String, HtmlPage]()
@@ -538,7 +538,7 @@ object HtmlFactoryTest extends Properties("HtmlFactory") {
     //println(files)
 
     // class
-    {
+    locally {
       val html = files.get("com/example/p1/Clazz.html")
         .map(page => { lazy val s = toHtml(page); () => s })
       property("class") = html.map(_()).isDefined

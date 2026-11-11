@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -14,8 +14,7 @@ package scala.tools.nsc
 package doc
 package model
 
-import scala.collection._
-
+import scala.collection.immutable.SortedMap
 
 /** A fragment of code. */
 abstract class TreeEntity {

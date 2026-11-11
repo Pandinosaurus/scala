@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -51,7 +51,7 @@ abstract class CommonTokens {
   // J: PUBLIC = 42
   final val PROTECTED = 43
   final val PRIVATE = 44
-  // S: SEALED = 45
+  final val SEALED = 45     // J: contextual keyword
   final val ABSTRACT = 46
   // J: DEFAULT = 47
   // J: STATIC = 48

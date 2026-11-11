@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -191,15 +191,20 @@ object BackendReporting {
             s"\nthat would cause an IllegalAccessError when inlined into class $callsiteClass."
 
         case IllegalAccessCheckFailed(_, _, _, _, callsiteClass, instruction, cause) =>
-          s"Failed to check if $calleeMethodSig can be safely inlined to $callsiteClass without causing an IllegalAccessError. Checking instruction ${AsmUtils.textify(instruction)} failed:\n" + cause
+          sm"""|Failed to check if $calleeMethodSig can be safely inlined to $callsiteClass without causing an IllegalAccessError.
+               |Checking failed for instruction ${AsmUtils.textify(instruction)}:
+               |$cause"""
 
         case MethodWithHandlerCalledOnNonEmptyStack(_, _, _, _, callsiteClass, callsiteName, callsiteDesc) =>
-          s"""The operand stack at the callsite in ${BackendReporting.methodSignature(callsiteClass, callsiteName, callsiteDesc)} contains more values than the
-             |arguments expected by the callee $calleeMethodSig. These values would be discarded
-             |when entering an exception handler declared in the inlined method.""".stripMargin
+          sm"""|The operand stack at the callsite in ${BackendReporting.methodSignature(callsiteClass, callsiteName, callsiteDesc)} contains more values than the
+               |arguments expected by the callee $calleeMethodSig. These values would be discarded
+               |when entering an exception handler declared in the inlined method."""
 
         case SynchronizedMethod(_, _, _, _) =>
           s"Method $calleeMethodSig cannot be inlined because it is synchronized."
+
+        case _: NoBytecode =>
+          s"Method $calleeMethodSig cannot be inlined because it does not have any instructions, even though it is not abstract. The class may come from a signature jar file (such as a Bazel 'hjar')."
 
         case StrictfpMismatch(_, _, _, _, callsiteClass, callsiteName, callsiteDesc) =>
           s"""The callsite method ${BackendReporting.methodSignature(callsiteClass, callsiteName, callsiteDesc)}
@@ -227,6 +232,7 @@ object BackendReporting {
   final case class MethodWithHandlerCalledOnNonEmptyStack(calleeDeclarationClass: InternalName, name: String, descriptor: String, annotatedInline: Boolean,
                                                     callsiteClass: InternalName, callsiteName: String, callsiteDesc: String) extends CannotInlineWarning
   final case class SynchronizedMethod(calleeDeclarationClass: InternalName, name: String, descriptor: String, annotatedInline: Boolean) extends CannotInlineWarning
+  final case class NoBytecode(calleeDeclarationClass: InternalName, name: String, descriptor: String, annotatedInline: Boolean) extends CannotInlineWarning
   final case class StrictfpMismatch(calleeDeclarationClass: InternalName, name: String, descriptor: String, annotatedInline: Boolean,
                               callsiteClass: InternalName, callsiteName: String, callsiteDesc: String) extends CannotInlineWarning
   case class ResultingMethodTooLarge(calleeDeclarationClass: InternalName, name: String, descriptor: String, annotatedInline: Boolean,

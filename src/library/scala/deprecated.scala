@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -39,6 +39,9 @@ import scala.annotation.meta._
  *  // warning: there were two deprecation warnings (since FooLib 12.0)
  *  // warning: there were three deprecation warnings in total; re-run with -deprecation for details
  *  }}}
+ *
+ *  The Scala compiler also warns about using definitions annotated with [[java.lang.Deprecated]]. However it is
+ *  recommended to use the Scala `@deprecated` annotation in Scala code because it allows providing a deprecation message.
  *
  *  '''`@deprecated` in the Scala language and its standard library'''<br/>
  *

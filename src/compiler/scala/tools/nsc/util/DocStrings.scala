@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -91,7 +91,7 @@ object DocStrings {
    *  usecase or the end of the string, as they might include other sections
    *  of their own
    */
-  def tagIndex(str: String, p: Int => Boolean = (idx => true)): List[(Int, Int)] = {
+  def tagIndex(str: String, p: Int => Boolean = (_ => true)): List[(Int, Int)] = {
     var indices = findAll(str, 0) (idx => str(idx) == '@' && p(idx))
     indices = mergeUsecaseSections(str, indices)
     indices = mergeInheritdocSections(str, indices)
@@ -208,15 +208,17 @@ object DocStrings {
     str.substring(start, finish)
   }
 
+  private val sectionTags = List("@param", "@tparam", "@throws")
+
   /** Extract the section text, except for the tag and comment newlines */
   def extractSectionText(str: String, section: (Int, Int)): (Int, Int) = {
     val (beg, end) = section
-    if (str.startsWith("@param", beg) ||
-        str.startsWith("@tparam", beg) ||
-        str.startsWith("@throws", beg))
-      (skipWhitespace(str, skipIdent(str, skipWhitespace(str, skipTag(str, beg)))), end)
-    else
-      (skipWhitespace(str, skipTag(str, beg)), end)
+    val skipped =
+      if (sectionTags.exists(str.startsWith(_, beg)))
+        skipIdent(str, skipWhitespace(str, skipTag(str, beg)))
+      else
+        skipTag(str, beg)
+    (skipWhitespace(str, skipped), end)
   }
 
   /** Cleanup section text */

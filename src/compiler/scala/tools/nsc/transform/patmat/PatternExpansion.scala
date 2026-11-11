@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -142,7 +142,7 @@ trait PatternExpansion {
           if (extractedBinder != NoSymbol) fun.tpe.resultType(List(SingleType(NoPrefix, extractedBinder)))
           else fun.tpe
 
-        packSymbols(appliedToExtractedBinder.paramss.flatten, appliedToExtractedBinder.finalResultType)
+        existentialsAndSkolems.packSymbols(appliedToExtractedBinder.paramss.flatten, appliedToExtractedBinder.finalResultType)
       }
 
     private def resultOfGetInMonad(arg: Symbol = unapplySelector) =
@@ -241,7 +241,7 @@ trait PatternExpansion {
       val offeringString = if (isErroneous) "<error>" else productTypes match {
         case tps if isSeq => (tps.map(_.toString) :+ s"${elementType}*").mkString("(", ", ", ")")
         case Nil       => "Boolean"
-        case tp :: Nil => tp
+        case tp :: Nil => tp.toString
         case tps       => tps.mkString("(", ", ", ")")
       }
       val offerString = if (isErroneous) "" else s" offering $offeringString"

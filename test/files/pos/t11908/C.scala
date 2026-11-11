@@ -1,5 +1,9 @@
-// javaVersion: 16+
+//> using jvm 16+
 object C {
+
+  def useR0: Unit = {
+    val r0 = new R0
+  }
 
   def useR1 = {
     // constructor signature
@@ -8,6 +12,7 @@ object C {
     // accessors signature
     val i: Int = r1.i
     val s: String = r1.s
+    val j: Int = r1.i()
 
     // method
     val s2: String = r1.someMethod()
@@ -46,10 +51,21 @@ object C {
     val l: Long = r3.l
     val s: String = r3.s
 
+    locally {
+      val i: Int = r3.i()
+      val l: Long = r3.l()
+      val s: String = r3.s()
+    }
+
     // method
     val l2: Long = r3.l(43L, 44L)
 
     // supertype
     val isRecord: java.lang.Record = r3
+  }
+
+  def useR4: Unit = {
+    val r4 = new R4(42)
+    val n: Int = r4.t
   }
 }

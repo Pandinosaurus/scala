@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -281,15 +281,10 @@ abstract class UnPickler {
       val owner        = readSymbolRef()
       val flags        = pickledToRawFlags(readLongNat())
 
-      var privateWithin: Symbol = null
-      var inforef: Int = 0
-      readNat() match {
-        case index if isSymbolRef(index) =>
-          privateWithin = at(index, () => readSymbol())
-          inforef = readNat()
-        case index =>
-          privateWithin = NoSymbol
-          inforef = index
+      val (privateWithin: Symbol, inforef: Int) = {
+        val index = readNat()
+        if (isSymbolRef(index)) (at(index, () => readSymbol()), readNat())
+        else (NoSymbol, index)
       }
 
       def isModuleFlag      = (flags & MODULE) != 0L
@@ -466,12 +461,15 @@ abstract class UnPickler {
 
     /** Read an annotation argument, which is pickled either
      *  as a Constant or a Tree.
+     *
+     *  The pickler writes a `Literal` of constant type as its value. Give it back the type the typer gives a
+     *  literal, so that an argument has the same type whether the annotation was typed from source or unpickled.
      */
     protected def readAnnotArg(i: Int): Tree = bytes(index(i)) match {
       case TREE => at(i, () => readTree())
       case _    =>
         val const = at(i, () => readConstant())
-        Literal(const) setType const.tpe
+        Literal(const) setType (if (const.tag == UnitTag) definitions.UnitTpe else ConstantType(const))
     }
 
     /** Read a ClassfileAnnotArg (argument to a classfile annotation)
@@ -531,15 +529,6 @@ abstract class UnPickler {
       @inline def all[T](body: => T): List[T] = until(end, () => body)
       @inline def rep[T](body: => T): List[T] = times(readNat(), () => body)
 
-      // !!! What is this doing here?
-      def fixApply(tree: Apply, tpe: Type): Apply = {
-        val Apply(fun, args) = tree
-        if (fun.symbol.isOverloaded) {
-          fun setType fun.symbol.info
-          inferMethodAlternative(fun, args map (_.tpe), tpe)
-        }
-        tree
-      }
       def ref()         = readTreeRef()
       def caseRef()     = readCaseDefRef()
       def modsRef()     = readModifiersRef()
@@ -558,13 +547,25 @@ abstract class UnPickler {
       }
       def selectorsRef() = all(ImportSelector(nameRef(), -1, nameRef(), -1))
 
+      // For ASTs we pickle the `tpe` and the `symbol`. References to symbols (`EXTref`) are pickled as owner + name,
+      // which means overloaded symbols cannot be resolved.
+      // This method works around that by selecting the overload based on the tree type.
+      def fixOverload(t: Tree, tpe: Type): Unit = t match {
+        case sel: Select =>
+          if (sel.symbol.isOverloaded) {
+            val qt = sel.qualifier.tpe
+            sel.symbol.alternatives.find(alt => qt.memberType(alt).matches(tpe)).foreach(sel.setSymbol)
+          }
+        case _ =>
+      }
+
       /* A few of the most popular trees have been pulled to the top for
        * switch efficiency purposes.
        */
-      def readTree(tpe: Type): Tree = (tag: @switch) match {
+      def readTree(): Tree = (tag: @switch) match {
         case IDENTtree           => Ident(nameRef())
         case SELECTtree          => Select(ref(), nameRef())
-        case APPLYtree           => fixApply(Apply(ref(), all(ref())), tpe) // !!!
+        case APPLYtree           => Apply(ref(), all(ref()))
         case BINDtree            => Bind(nameRef(), ref())
         case BLOCKtree           => all(ref()) match { case stats :+ expr => Block(stats, expr) case x => throw new MatchError(x) }
         case IFtree              => If(ref(), ref(), ref())
@@ -607,11 +608,11 @@ abstract class UnPickler {
       }
 
       val tpe    = readTypeRef()
-      val sym    = if (isTreeSymbolPickled(tag)) readSymbolRef() else null
-      val result = readTree(tpe)
+      val sym    = if (translations.isTreeSymbolPickled(tag)) readSymbolRef() else null
+      val result = readTree()
 
-      if (sym ne null) result setSymbol sym
-      result setType tpe
+      if (sym ne null) fixOverload(result.setSymbol(sym), tpe)
+      result.setType(tpe)
     }
 
     /* Read an abstract syntax tree */
@@ -704,8 +705,6 @@ abstract class UnPickler {
 
     protected def errorBadSignature(msg: String) =
       throw new RuntimeException("malformed Scala signature of " + classRoot.name + " at " + readIndex + "; " + msg)
-
-    def inferMethodAlternative(fun: Tree, argtpes: List[Type], restpe: Type): Unit = {} // can't do it; need a compiler for that.
 
     def newLazyTypeRef(i: Int): LazyType = new LazyTypeRef(i)
     def newLazyTypeRefAndAlias(i: Int, j: Int): LazyType = new LazyTypeRefAndAlias(i, j)

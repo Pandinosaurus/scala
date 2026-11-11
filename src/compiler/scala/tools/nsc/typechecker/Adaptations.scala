@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -23,7 +23,7 @@ import scala.tools.nsc.Reporting.WarningCategory
  *  @author  Paul Phillips
  */
 trait Adaptations {
-  self: Analyzer =>
+  self: AbstractAnalyzer =>
 
   import global._
   import definitions._
@@ -37,7 +37,7 @@ trait Adaptations {
         case _                    => EmptyTree
       }
       def isInfix = t match {
-        case Apply(_, arg :: Nil) => t.hasAttachment[MultiargInfixAttachment.type]
+        case Apply(_, _ :: Nil) => t.hasAttachment[MultiargInfixAttachment.type]
         case _                    => false
       }
       def callString = (
@@ -77,28 +77,37 @@ trait Adaptations {
         )
       }
       @inline def msg(what: String): String = s"adaptation of an empty argument list by inserting () $what"
-      @inline def noAdaptation = {
-        context.error(t.pos, adaptWarningMessage(msg("has been removed"), showAdaptation = false))
-        false // drop adaptation
-      }
-      @inline def deprecatedAdaptation = {
+      @inline def deprecatedAdaptation: true = {
         val twist =
           if (isLeakyTarget) "leaky (Object-receiving) target makes this especially dangerous"
           else "this is unlikely to be what you want"
         val text = s"${msg("is deprecated")}: ${twist}"
-        context.deprecationWarning(t.pos, t.symbol, adaptWarningMessage(text), "2.11.0")
+        if (currentRun.isScala3)
+          currentRun.reporting.warning(t.pos, adaptWarningMessage(text), WarningCategory.Scala3Migration, t.symbol)
+        else
+          context.deprecationWarning(t.pos, t.symbol, adaptWarningMessage(text), "2.11.0")
         true // keep adaptation
       }
-      @inline def warnAdaptation = {
-        if (settings.warnAdaptedArgs && !isInfix) context.warning(t.pos, adaptWarningMessage(
-          s"adapted the argument list to the expected ${args.size}-tuple: add additional parens instead"),
+      @inline def warnAdaptation: true = {
+        def discardedArgs = t match {
+          case Apply(_, Block(Apply(TypeApply(Select(adapter, _), _), adapted) :: Nil, expr) :: Nil) =>
+            isTupleSymbol(adapter.symbol.companion) && expr.tpe == UnitTpe && adapted == args
+          case _ => false
+        }
+        if (settings.lintArgDiscard && discardedArgs) context.warning(t.pos, adaptWarningMessage(
+          s"adapted the argument list to expected Unit type: arguments will be discarded"),
           WarningCategory.LintAdaptedArgs)
+        else if (settings.warnAdaptedArgs && !isInfix) {
+          val msg = adaptWarningMessage(
+            s"adapted the argument list to the expected ${args.size}-tuple: add additional parens instead")
+          val pos = wrappingPos(args)
+          context.warning(t.pos, msg, WarningCategory.LintAdaptedArgs,
+            runReporting.codeAction("add wrapping parentheses", pos, s"(${pos.source.sourceAt(pos)})", msg))
+        }
         true // keep adaptation
       }
       if (args.nonEmpty)
         warnAdaptation
-      else if (currentRun.isScala3)
-        noAdaptation
       else
         deprecatedAdaptation
     }

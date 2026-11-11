@@ -174,6 +174,27 @@ class TreeSeqMapTest {
       assertEquals(s"modification empty from instance keeps modification order", List(1 -> 3, 3 -> 4), e3.toList)
     }
   }
+  @Test
+  def `t13019 empty.iterator is idempotent`: Unit = {
+    val m = util.Try(TreeSeqMap.empty.iterator.next())
+    assertTrue(m.isFailure)
+    assertFalse("empty iterator does not have next", TreeSeqMap.empty.iterator.hasNext)
+  }
+
+  @Test
+  def builderReuseAfterClear(): Unit = {
+    val b = TreeSeqMap.newBuilder[Int, String]
+    (1 to 5).foreach(i => b += (i -> "x"))
+    b.result()
+    b.clear()
+    b += (1 -> "a")
+    b += (1 -> "b")
+    val m = b.result()
+    assertEquals(1, m.size)
+    assertEquals(1, m.iterator.size)
+    assertEquals(List(1 -> "b"), m.toList)
+    assertTrue(m.removed(1).isEmpty)
+  }
 }
 object TreeSeqMapTest extends App {
   import TreeSeqMap.Ordering._

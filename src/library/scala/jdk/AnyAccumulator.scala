@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -20,7 +20,7 @@ import scala.collection.Stepper.EfficientSplit
 import scala.collection.{AnyStepper, Factory, IterableFactoryDefaults, SeqFactory, Stepper, StepperShape, mutable}
 import scala.reflect.ClassTag
 
-/** An Accumulator for arbitrary element types, see [[Accumulator]]. */
+/** An `Accumulator` for arbitrary element types, see [[Accumulator]]. */
 final class AnyAccumulator[A]
   extends Accumulator[A, AnyAccumulator, AnyAccumulator[A]]
     with mutable.SeqOps[A, AnyAccumulator, AnyAccumulator[A]]

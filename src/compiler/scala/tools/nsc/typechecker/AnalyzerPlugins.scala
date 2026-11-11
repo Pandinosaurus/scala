@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -16,7 +16,7 @@ package typechecker
 /**
  *  @author Lukas Rytz
  */
-trait AnalyzerPlugins { self: Analyzer with splain.SplainData =>
+trait AnalyzerPlugins { self: AbstractAnalyzer with splain.SplainData =>
   import global._
 
   trait AnalyzerPlugin {
@@ -54,7 +54,8 @@ trait AnalyzerPlugins { self: Analyzer with splain.SplainData =>
     /**
      * Let analyzer plugins change the types assigned to definitions. For definitions that have
      * an annotated type, the assigned type is obtained by typing that type tree. Otherwise, the
-     * type is inferred by typing the definition's righthand side.
+     * type is inferred by typing the definition's righthand side, or from the overridden
+     * member under `-Xsource-features`.
      *
      * In order to know if the type was inferred, you can query the `wasEmpty` field in the `tpt`
      * TypeTree of the definition (for DefDef and ValDef).
@@ -347,7 +348,7 @@ trait AnalyzerPlugins { self: Analyzer with splain.SplainData =>
 
   /** @see AnalyzerPlugin.pluginsTyped */
   def pluginsTyped(tpe: Type, typer: Typer, tree: Tree, mode: Mode, pt: Type): Type = {
-    var result = addAnnotations(tree, tpe)
+    var result = global.annotationCheckerSupport.addAnnotations(tree, tpe)
     var plugins = analyzerPlugins
     while (!plugins.isEmpty) { // OPT use loop rather than the invoke combinator to reduce allocations
       result = plugins.head.pluginsTyped(result, typer, tree, mode, pt)
@@ -371,20 +372,20 @@ trait AnalyzerPlugins { self: Analyzer with splain.SplainData =>
   /** @see AnalyzerPlugin.canAdaptAnnotations */
   def canAdaptAnnotations(tree: Tree, typer: Typer, mode: Mode, pt: Type): Boolean = invoke(new CumulativeOp[Boolean] {
     // support deprecated methods in annotation checkers
-    def default = global.canAdaptAnnotations(tree, mode, pt)
+    def default = global.annotationCheckerSupport.canAdaptAnnotations(tree, mode, pt)
     def accumulate = (curr, p) => curr || p.canAdaptAnnotations(tree, typer, mode, pt)
   })
 
   /** @see AnalyzerPlugin.adaptAnnotations */
   def adaptAnnotations(tree: Tree, typer: Typer, mode: Mode, pt: Type): Tree = invoke(new CumulativeOp[Tree] {
     // support deprecated methods in annotation checkers
-    def default = global.adaptAnnotations(tree, mode, pt)
+    def default = global.annotationCheckerSupport.adaptAnnotations(tree, mode, pt)
     def accumulate = (tree, p) => p.adaptAnnotations(tree, typer, mode, pt)
   })
 
   /** @see AnalyzerPlugin.pluginsTypedReturn */
   def pluginsTypedReturn(tpe: Type, typer: Typer, tree: Return, pt: Type): Type = invoke(new CumulativeOp[Type] {
-    def default = adaptTypeOfReturn(tree.expr, pt, tpe)
+    def default = global.annotationCheckerSupport.adaptTypeOfReturn(tree.expr, pt, tpe)
     def accumulate = (tpe, p) => p.pluginsTypedReturn(tpe, typer, tree, pt)
   })
 
@@ -434,7 +435,7 @@ trait AnalyzerPlugins { self: Analyzer with splain.SplainData =>
         if (plugin.isActive()) {
           op.custom(plugin) match {
             case None =>
-            case s @ Some(custom) =>
+            case s @ Some(_) =>
               if (result.isDefined) {
                 typer.context.error(op.position, s"both $resultPlugin and $plugin want to ${op.description}")
                 op.default

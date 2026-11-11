@@ -2,11 +2,10 @@ package scala.tools.nsc
 package typechecker
 
 import org.junit.Assert.assertTrue
-import org.junit.{After, Before, Test}
+import org.junit.Test
 import org.junit.runner.RunWith
 import org.junit.runners.JUnit4
 
-import scala.tools.nsc.settings.ScalaVersion
 import scala.tools.testkit.BytecodeTesting
 
 class A
@@ -24,20 +23,14 @@ trait ZwC[-T] extends Z[T] with C
 
 @RunWith(classOf[JUnit4])
 class InferencerTests extends BytecodeTesting {
-  import compiler.global._, analyzer._
+  import compiler.global._
+  import analyzer._
 
-  var storedXsource: ScalaVersion = null
-  @Before
-  def storeXsource(): Unit = {
-    storedXsource = settings.source.value
-  }
-  @After
-  def restoreXsource(): Unit = {
-    settings.source.value = storedXsource
-  }
+  override def compilerArgs: String = "-Xsource:3"
 
   @Test
   def isAsSpecificScala2(): Unit = {
+    settings.XsourceFeatures.clear()
     val run = new global.Run
 
     enteringPhase(run.typerPhase) {
@@ -60,7 +53,7 @@ class InferencerTests extends BytecodeTesting {
       val ZBwC = typeOf[ZwC[B]]
 
       // https://github.com/scala/bug/issues/2509
-      // See discussion at https://github.com/lampepfl/dotty/blob/89540268e6c49fb92b9ca61249e46bb59981bf5a/src/dotty/tools/dotc/typer/Applications.scala#L925-L951
+      // See discussion at https://github.com/scala/scala3/blob/89540268e6c49fb92b9ca61249e46bb59981bf5a/src/dotty/tools/dotc/typer/Applications.scala#L925-L951
 
       // Covariant
       assertTrue(!typer.infer.isAsSpecific(XA, XB))
@@ -103,7 +96,8 @@ class InferencerTests extends BytecodeTesting {
 
   @Test
   def isAsSpecificScala3(): Unit = {
-    settings.source.value = ScalaVersion("3.0")
+    settings.XsourceFeatures.clear()
+    settings.XsourceFeatures.tryToSet(List("implicit-resolution"))
 
     val run = new global.Run
 
@@ -127,7 +121,7 @@ class InferencerTests extends BytecodeTesting {
       val ZBwC = typeOf[ZwC[B]]
 
       // https://github.com/scala/bug/issues/2509
-      // See discussion at https://github.com/lampepfl/dotty/blob/89540268e6c49fb92b9ca61249e46bb59981bf5a/src/dotty/tools/dotc/typer/Applications.scala#L925-L951
+      // See discussion at https://github.com/scala/scala3/blob/89540268e6c49fb92b9ca61249e46bb59981bf5a/src/dotty/tools/dotc/typer/Applications.scala#L925-L951
 
       // Covariant
       assertTrue(!typer.infer.isAsSpecific(XA, XB))

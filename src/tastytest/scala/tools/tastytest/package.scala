@@ -1,3 +1,15 @@
+/*
+ * Scala (https://www.scala-lang.org)
+ *
+ * Copyright EPFL and Lightbend, Inc. dba Akka
+ *
+ * Licensed under Apache License 2.0
+ * (http://www.apache.org/licenses/LICENSE-2.0).
+ *
+ * See the NOTICE file distributed with this work for
+ * additional information regarding copyright ownership.
+ */
+
 package scala.tools
 
 package object tastytest {
@@ -11,7 +23,7 @@ package object tastytest {
   def printsuccessln(str: String): Unit = System.err.println(green(str))
 
   implicit final class ZipOps[T](val t: Try[T]) extends AnyVal {
-    @inline final def *>[U](u: Try[U]): Try[(T, U)] = for {
+    @inline final def <*>[U](u: Try[U]): Try[(T, U)] = for {
       x <- t
       y <- u
     } yield (x, y)
@@ -25,8 +37,9 @@ package object tastytest {
   implicit final class PathOps(val s: String) extends AnyVal {
     @inline final def / (part: String): String = path(s, part)
     @inline final def / (parts: Seq[String]): String = path(s, parts:_*)
-    @inline final def **/ : IndexedSeq[String] = s.split(raw"\.").toIndexedSeq
-    @inline final def *->/ : String = s.replace(raw"\.", pathSep) + "/"
+
+    /** replace '.' by '/'. */
+    @inline final def toBinaryName : String = s.replace(raw"\.", pathSep) + "/"
   }
 
   private def path(part: String, parts: String*): String = (part +: parts).mkString(pathSep)

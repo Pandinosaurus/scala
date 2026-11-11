@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -15,9 +15,10 @@ package reflect
 package internal
 package tpe
 
-import scala.collection.mutable
-import util.TriState
 import scala.annotation.tailrec
+import scala.collection.mutable
+import util.{StringContextStripMarginOps, TriState}
+import java.util.IdentityHashMap
 
 trait TypeComparers {
   self: SymbolTable =>
@@ -29,6 +30,16 @@ trait TypeComparers {
 
   private[this] val _pendingSubTypes = new mutable.HashSet[SubTypePair]
   def pendingSubTypes = _pendingSubTypes
+
+  private[this] val _knownFalseSubTypes = new IdentityHashMap[Type, List[Type]]
+  def knownFalseSubTypes = _knownFalseSubTypes
+
+  // Called on every top-level `isSubType` / `isSameType`, but the map is only populated for pathological recursive
+  // subtype checks. Guard the `clear()`, as `IdentityHashMap.clear` zeroes the entire table even when empty.
+  private def clearKnownFalseSubTypes(): Unit = {
+    val m = knownFalseSubTypes
+    if (!m.isEmpty) m.clear()
+  }
 
   final case class SubTypePair(tp1: Type, tp2: Type) {
     // scala/bug#8146 we used to implement equality here in terms of pairwise =:=.
@@ -70,11 +81,18 @@ trait TypeComparers {
     } else
       false
 
+  /** Distinct type members of the same name are the same type under unifiable prefixes (one may override
+   *  the other, or both may be bound in a refinement or self type), but distinct classes never are:
+   *  a class can't be overridden, so an instance of one isn't an instance of the other (scala/bug#13205).
+   */
+  private def isUnifiableSyms(sym1: Symbol, pre1: Type, sym2: Symbol, pre2: Type) =
+    !(sym1.isClass && sym2.isClass) && isUnifiable(pre1, pre2)
+
   private def equalSymsAndPrefixes(sym1: Symbol, pre1: Type, sym2: Symbol, pre2: Type): Boolean = (
     if (sym1 eq sym2)
       sym1.hasPackageFlag || sym1.owner.hasPackageFlag || phase.erasedTypes || pre1 =:= pre2
     else
-      (sym1.name == sym2.name) && isUnifiable(pre1, pre2)
+      (sym1.name == sym2.name) && isUnifiableSyms(sym1, pre1, sym2, pre2)
   )
 
   def isDifferentType(tp1: Type, tp2: Type): Boolean = try {
@@ -84,9 +102,10 @@ trait TypeComparers {
     }
   } finally {
     subsametypeRecursions -= 1
-    // XXX AM TODO: figure out when it is safe and needed to clear the log -- the commented approach below is too eager (it breaks #3281, #3866)
-    // it doesn't help to keep separate recursion counts for the three methods that now share it
-    // if (subsametypeRecursions == 0) undoLog.clear()
+    if (subsametypeRecursions == 0) {
+      clearKnownFalseSubTypes()
+      // undoLog.clear() // too eager, breaks #3281, #3866
+    }
   }
 
   def isDifferentTypeConstructor(tp1: Type, tp2: Type) = !isSameTypeConstructor(tp1, tp2)
@@ -121,15 +140,16 @@ trait TypeComparers {
   }
   finally {
     subsametypeRecursions -= 1
-    // XXX AM TODO: figure out when it is safe and needed to clear the log -- the commented approach below is too eager (it breaks #3281, #3866)
-    // it doesn't help to keep separate recursion counts for the three methods that now share it
-    // if (subsametypeRecursions == 0) undoLog.clear()
+    if (subsametypeRecursions == 0) {
+      clearKnownFalseSubTypes()
+      // undoLog.clear() // too eager, breaks #3281, #3866
+    }
   }
 
   // @pre: at least one argument has annotations
   private def sameAnnotatedTypes(tp1: Type, tp2: Type) = (
-       annotationsConform(tp1, tp2)
-    && annotationsConform(tp2, tp1)
+       annotationCheckerSupport.annotationsConform(tp1, tp2)
+    && annotationCheckerSupport.annotationsConform(tp2, tp1)
     && (tp1.withoutAnnotations =:= tp2.withoutAnnotations)
   )
   // We flush out any AnnotatedTypes before calling isSameType2 because
@@ -195,7 +215,7 @@ trait TypeComparers {
   private def methodHigherOrderTypeParamsSubVariance(low: Symbol, high: Symbol) =
     methodHigherOrderTypeParamsSameVariance(low, high) || low.variance.isInvariant
 
-  def isSameType2(tp1: Type, tp2: Type): Boolean = {
+  private def isSameType2(tp1: Type, tp2: Type): Boolean = {
     def retry() = {
       // OPT no need to compare eta-expansions of a pair of distinct class type refs, we'd get the same result (false).
       // e.g. we know that TypeRef(..., Some, Nil) is not the same as TypeRef(..., Option, Nil) without needing to compare
@@ -291,16 +311,22 @@ trait TypeComparers {
 
     try result = { // if subtype test fails, it should not affect constraints on typevars
       if (subsametypeRecursions >= LogPendingSubTypesThreshold) {
-        val p = new SubTypePair(tp1, tp2)
-        if (pendingSubTypes(p))
+        val p = SubTypePair(tp1, tp2)
+        if (pendingSubTypes(p)) {
+          val ts = knownFalseSubTypes.get(tp1)
+          val cur = if (ts != null) ts else Nil
+          knownFalseSubTypes.put(tp1, tp2 :: cur) // see scala/bug#13119
           false // see neg/t8146-no-finitary*
-        else
+        } else
           try {
             pendingSubTypes += p
             isSubType1(tp1, tp2, depth)
           } finally {
             pendingSubTypes -= p
           }
+      } else if (!knownFalseSubTypes.isEmpty && { val ts = knownFalseSubTypes.get(tp1); ts != null && ts.contains(tp2) }) {
+        // redundant `isEmpty` check is probably premature optimization, but isSubType is perf sensitive
+        false
       } else {
         isSubType1(tp1, tp2, depth)
       }
@@ -309,9 +335,10 @@ trait TypeComparers {
     result
   } finally {
     subsametypeRecursions -= 1
-    // XXX AM TODO: figure out when it is safe and needed to clear the log -- the commented approach below is too eager (it breaks #3281, #3866)
-    // it doesn't help to keep separate recursion counts for the three methods that now share it
-    // if (subsametypeRecursions == 0) undoLog.clear()
+    if (subsametypeRecursions == 0) {
+      clearKnownFalseSubTypes()
+      // undoLog.clear() // too eager, breaks #3281, #3866
+    }
   }
 
   /** Check whether the subtype or type equivalence relationship
@@ -343,7 +370,7 @@ trait TypeComparers {
 
   private def isSubType1(tp1: Type, tp2: Type, depth: Depth): Boolean = typeRelationPreCheck(tp1, tp2) match {
     case state if state.isKnown                                                  => state.booleanValue
-    case _ if tp1.isInstanceOf[AnnotatedType] || tp2.isInstanceOf[AnnotatedType] => annotationsConform(tp1, tp2) && (tp1.withoutAnnotations <:< tp2.withoutAnnotations)
+    case _ if tp1.isInstanceOf[AnnotatedType] || tp2.isInstanceOf[AnnotatedType] => annotationCheckerSupport.annotationsConform(tp1, tp2) && (tp1.withoutAnnotations <:< tp2.withoutAnnotations)
     case _                                                                       => isSubType2(tp1, tp2, depth)
   }
 
@@ -379,7 +406,7 @@ trait TypeComparers {
   }
 
   // @assume tp1.isHigherKinded || tp2.isHigherKinded
-  def isHKSubType(tp1: Type, tp2: Type, depth: Depth): Boolean = {
+  private def isHKSubType(tp1: Type, tp2: Type, depth: Depth): Boolean = {
 
     def hkSubVariance(tparams1: List[Symbol], tparams2: List[Symbol]) =
       (tparams1 corresponds tparams2)(methodHigherOrderTypeParamsSubVariance)
@@ -413,11 +440,11 @@ trait TypeComparers {
       case (_: PolyType, MethodType(ps, _)) if ps exists (_.tpe.isWildcard) => false // don't warn on HasMethodMatching on right hand side
       // TODO: rethink whether ExistentialType should be considered isHigherKinded when its underlying type is;
       // in any case, we do need to handle one of the types being an existential
-      case (tp1, et2: ExistentialType)                                      => et2.withTypeVars(isSubType(tp1, _, depth), depth)
-      case (et1: ExistentialType, tp2)                                      =>
+      case (ntp1, et2: ExistentialType)                                     => et2.withTypeVars(isSubType(ntp1, _, depth), depth)
+      case (et1: ExistentialType, ntp2)                                     =>
         try {
           skolemizationLevel += 1
-          isSubType(et1.skolemizeExistential, tp2, depth)
+          isSubType(et1.skolemizeExistential, ntp2, depth)
         } finally { skolemizationLevel -= 1 }
       case _                                                                => // @assume !(both .isHigherKinded) thus cannot be subtypes
         def tp_s(tp: Type): String = f"$tp%-20s ${util.shortClassOfInstance(tp)}%s"
@@ -430,7 +457,7 @@ trait TypeComparers {
       || (if (isNoArgStaticClassTypeRef(tp1) && isNoArgStaticClassTypeRef(tp2))
             tp1.typeSymbolDirect.isNonBottomSubClass(tp2.typeSymbolDirect) // OPT faster than comparing eta-expanded types
           else
-            isSub(tp1.withoutAnnotations, tp2.withoutAnnotations) && annotationsConform(tp1, tp2)
+            isSub(tp1.withoutAnnotations, tp2.withoutAnnotations) && annotationCheckerSupport.annotationsConform(tp1, tp2)
          )
     )
   }
@@ -464,7 +491,7 @@ trait TypeComparers {
             val pre2 = tr2.pre
             (((if (sym1 eq sym2) phase.erasedTypes || sym1.rawowner.hasPackageFlag || isSubType(pre1, pre2, depth)
             else (sym1.name == sym2.name && !sym1.isModuleClass && !sym2.isModuleClass &&
-              (isUnifiable(pre1, pre2) ||
+              (isUnifiableSyms(sym1, pre1, sym2, pre2) ||
                 isSameSpecializedSkolem(sym1, sym2, pre1, pre2) ||
                 sym2.isAbstractType && isSubPre(pre1, pre2, sym2)))) &&
               isSubArgs(tr1.args, tr2.args, sym1.typeParams, depth))
@@ -482,7 +509,7 @@ trait TypeComparers {
         }
       case AnnotatedType(_, _) =>
         isSubType(tp1.withoutAnnotations, tp2.withoutAnnotations, depth) &&
-          annotationsConform(tp1, tp2)
+          annotationCheckerSupport.annotationsConform(tp1, tp2)
       case tp2: ProtoType => tp2.isMatchedBy(tp1, depth)
       case tv2 @ TypeVar(_, constr2) =>
         tp1 match {
@@ -505,7 +532,7 @@ trait TypeComparers {
       case pt: ProtoType => pt.canMatch(tp2, depth)
       case AnnotatedType(_, _) =>
         isSubType(tp1.withoutAnnotations, tp2.withoutAnnotations, depth) &&
-          annotationsConform(tp1, tp2)
+          annotationCheckerSupport.annotationsConform(tp1, tp2)
       case tv @ TypeVar(_,_) =>
         tv.registerBound(tp2, isLowerBound = false)
       case ExistentialType(_, _) => // TODO: fast initial try for tp1 and tp2 both existentials? (first try instantiating tp2's existentials to tp1's skolems?)
@@ -638,18 +665,17 @@ trait TypeComparers {
         isSubType(tp1, tp2)
     }
 
-  def isNumericSubType(tp1: Type, tp2: Type) = (
-    isNumericSubClass(primitiveBaseClass(tp1.dealiasWiden), primitiveBaseClass(tp2.dealias))
-   )
-
-  /** If the given type has a primitive class among its base classes,
-   *  the symbol of that class. Otherwise, NoSymbol.
-   */
-  private def primitiveBaseClass(tp: Type): Symbol = {
-    @tailrec def loop(bases: List[Symbol]): Symbol = bases match {
-      case Nil     => NoSymbol
-      case x :: xs => if (isPrimitiveValueClass(x)) x else loop(xs)
+  def isNumericSubType(tp1: Type, tp2: Type) = {
+    /* If the given type has a primitive class among its base classes,
+     * the symbol of that class. Otherwise, NoSymbol.
+     */
+    def primitiveBaseClass(tp: Type): Symbol = {
+      def loop(bases: List[Symbol]): Symbol = bases match {
+        case base :: bases => if (isPrimitiveValueClass(base)) base else loop(bases)
+        case nil => NoSymbol
+      }
+      loop(tp.baseClasses)
     }
-    loop(tp.baseClasses)
+    isNumericSubClass(primitiveBaseClass(tp1.dealiasWiden), primitiveBaseClass(tp2.dealias))
   }
 }

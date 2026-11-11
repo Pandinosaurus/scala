@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -27,24 +27,23 @@ trait Validators {
     self: MacroImplRefCompiler =>
 
     def validateMacroImplRef() = {
-      sanityCheck()
-      if (macroImpl != Predef_???) checkMacroDefMacroImplCorrespondence()
-    }
-
-    private def sanityCheck() = {
-      if (!macroImpl.isMethod) MacroImplReferenceWrongShapeError()
-      if (macroImpl.typeParams.sizeCompare(targs) != 0) MacroImplWrongNumberOfTypeArgumentsError()
-      if (!macroImpl.isPublic) MacroImplNotPublicError()
-      if (macroImpl.isOverloaded) MacroImplOverloadedError()
-      val implicitParams = aparamss.flatten filter (_.isImplicit)
-      if (implicitParams.nonEmpty) MacroImplNonTagImplicitParameters(implicitParams)
-      val effectiveOwner = if (isImplMethod) macroImplOwner else macroImplOwner.owner
-      val effectivelyStatic = effectiveOwner.isStaticOwner || effectiveOwner.moduleClass.isStaticOwner
-      val correctBundleness = if (isImplMethod) macroImplOwner.isModuleClass else macroImplOwner.isClass && !macroImplOwner.isModuleClass
-      if (!effectivelyStatic || !correctBundleness) {
-        val isReplClassBased = settings.Yreplclassbased.value && effectiveOwner.enclosingTopLevelClass.isInterpreterWrapper
-        MacroImplReferenceWrongShapeError(isReplClassBased)
+      def confidenceCheck() = {
+        if (!macroImpl.isMethod) MacroImplReferenceWrongShapeError()
+        if (macroImpl.typeParams.sizeCompare(targs) != 0) MacroImplWrongNumberOfTypeArgumentsError()
+        if (!macroImpl.isPublic) MacroImplNotPublicError()
+        if (macroImpl.isOverloaded) MacroImplOverloadedError()
+        val implicitParams = aparamss.flatten filter (_.isImplicit)
+        if (implicitParams.nonEmpty) MacroImplNonTagImplicitParameters(implicitParams)
+        val effectiveOwner = if (isImplMethod) macroImplOwner else macroImplOwner.owner
+        val effectivelyStatic = effectiveOwner.isStaticOwner || effectiveOwner.moduleClass.isStaticOwner
+        val correctBundleness = if (isImplMethod) macroImplOwner.isModuleClass else macroImplOwner.isClass && !macroImplOwner.isModuleClass
+        if (!effectivelyStatic || !correctBundleness) {
+          val isReplClassBased = settings.Yreplclassbased.value && effectiveOwner.enclosingTopLevelClass.isInterpreterWrapper
+          MacroImplReferenceWrongShapeError(isReplClassBased)
+        }
       }
+      confidenceCheck()
+      if (macroImpl != Predef_???) checkMacroDefMacroImplCorrespondence()
     }
 
     private def checkMacroDefMacroImplCorrespondence() = {
@@ -75,7 +74,7 @@ trait Validators {
         checkMacroImplResultTypeMismatch(atpeToRtpe(aret), rret)
 
         val maxLubDepth = lubDepth(aparamss.flatten map (_.tpe)) max lubDepth(rparamss.flatten map (_.tpe))
-        val atargs = solvedTypes(atvars, atparams, varianceInType(aret), upper = false, maxLubDepth)
+        val atargs = solvedTypes(atvars, atparams, variances.varianceInType(aret), upper = false, maxLubDepth)
         val boundsOk = typer.silent(_.infer.checkBounds(macroDdef, NoPrefix, NoSymbol, atparams, atargs, ""))
         boundsOk match {
           case SilentResultValue(true) => // do nothing, success
@@ -128,7 +127,7 @@ trait Validators {
      */
     private lazy val macroImplSig: MacroImplSig = {
       val tparams = macroImpl.typeParams
-      val paramss = transformTypeTagEvidenceParams(macroImplRef, (param, tparam) => NoSymbol)
+      val paramss = transformTypeTagEvidenceParams(macroImplRef, (_, _) => NoSymbol)
       val ret = macroImpl.info.finalResultType
       MacroImplSig(tparams, paramss, ret)
     }

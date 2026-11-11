@@ -1,7 +1,7 @@
 /*
  * Scala (https://www.scala-lang.org)
  *
- * Copyright EPFL and Lightbend, Inc.
+ * Copyright EPFL and Lightbend, Inc. dba Akka
  *
  * Licensed under Apache License 2.0
  * (http://www.apache.org/licenses/LICENSE-2.0).
@@ -23,7 +23,7 @@ trait StdAttachments {
   def reifyBinding(tree: Tree): Tree =
     tree.attachments.get[ReifyBindingAttachment] match {
       case Some(ReifyBindingAttachment(binding)) => binding
-      case other => Ident(NoSymbol)
+      case _ => Ident(NoSymbol)
     }
 
   case class ReifyAliasAttachment(sym: Symbol, alias: TermName)
